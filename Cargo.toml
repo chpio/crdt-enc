@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "crdt-enc",
+    "crdt-enc-gpgme",
+    "crdt-enc-sodium",
+    "crdt-enc-tokio",
+    "examples/*",
+]
