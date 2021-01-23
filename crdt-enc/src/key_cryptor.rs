@@ -9,6 +9,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     cmp::{Eq, Ord, Ordering, PartialEq},
+    convert::Infallible,
     fmt::Debug,
     hash::{Hash, Hasher},
     sync::Arc,
@@ -42,6 +43,12 @@ pub struct Keys {
 }
 
 impl CvRDT for Keys {
+    type Validation = Infallible;
+
+    fn validate_merge(&self, _other: &Self) -> Result<(), Infallible> {
+        Ok(())
+    }
+
     fn merge(&mut self, other: Keys) {
         self.latest_key_id.merge(other.latest_key_id);
         self.keys.merge(other.keys);

@@ -5,11 +5,11 @@ authors = ["Thomas Heck <t@b128.net>"]
 edition = "2018"
 
 [dependencies]
-crdts = "4"
+crdts = "5"
 sodiumoxide = "0.2"
 anyhow = "1"
 serde = "1"
-rmp-serde = "0.14"
+rmp-serde = "0.15"
 serde_bytes = "0.11"
 uuid = "0.8"
 async-trait = "0.1"

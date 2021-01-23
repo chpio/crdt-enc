@@ -23,6 +23,7 @@ use tokio::{
     fs,
     io::{self, AsyncWrite, AsyncWriteExt},
 };
+use tokio_stream::wrappers::ReadDirStream;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -383,7 +384,7 @@ fn read_dir_optional(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> 
     async move {
         match fs::read_dir(&path).await {
             Ok(dir) => {
-                let entry_stream = dir.map(move |entry| {
+                let entry_stream = ReadDirStream::new(dir).map(move |entry| {
                     entry.with_context(|| format!("failed getting entry from {}", path.display()))
                 });
                 Ok(Either::Left(entry_stream))
@@ -413,7 +414,7 @@ async fn write_content_addressible_file(
     let mut digest = Sha3::v256();
     let mut buf = bytes.buf();
     while buf.has_remaining() {
-        let b = buf.bytes();
+        let b = buf.chunk();
         digest.update(b);
         buf.advance(b.len());
     }

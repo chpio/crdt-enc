@@ -22,6 +22,7 @@ use futures::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::HashSet,
+    convert::Infallible,
     default::Default,
     fmt::Debug,
     mem,
@@ -740,6 +741,12 @@ struct RemoteMeta {
 }
 
 impl CvRDT for RemoteMeta {
+    type Validation = Infallible;
+
+    fn validate_merge(&self, _other: &Self) -> Result<(), Infallible> {
+        Ok(())
+    }
+
     fn merge(&mut self, other: Self) {
         self.storage.merge(other.storage);
         self.cryptor.merge(other.cryptor);

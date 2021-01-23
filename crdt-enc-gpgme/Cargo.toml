@@ -7,11 +7,11 @@ edition = "2018"
 [dependencies]
 serde = "1"
 serde_bytes = "0.11"
-rmp-serde = "0.14"
+rmp-serde = "0.15"
 async-trait = "0.1"
 anyhow = "1"
 uuid = "0.8"
-crdts = "4"
+crdts = "5"
 gpgme = "0.9"
 dyn-clone = "1"
 

@@ -9,7 +9,7 @@ use crdt_enc::{
 };
 use crdts::{CmRDT, CvRDT, MVReg, Orswot};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{borrow::Cow, fmt::Debug, sync::Mutex as SyncMutex};
+use std::{borrow::Cow, convert::Infallible, fmt::Debug, sync::Mutex as SyncMutex};
 use uuid::Uuid;
 
 pub fn init() {
@@ -48,6 +48,12 @@ pub struct Meta {
 }
 
 impl CvRDT for Meta {
+    type Validation = Infallible;
+
+    fn validate_merge(&self, _other: &Self) -> Result<(), Infallible> {
+        Ok(())
+    }
+
     fn merge(&mut self, other: Self) {
         self.key_fps.merge(other.key_fps);
     }
@@ -117,12 +123,9 @@ impl crdt_enc::key_cryptor::KeyCryptor for KeyHandler {
 
             let read_ctx = data.remote_meta.read();
 
-            let actor = data.info.as_ref().context("info is none")?.actor();
-            let write_ctx = read_ctx.derive_add_ctx(actor);
-
             let mut keys = read_ctx
                 .val
-                .into_iter()
+                .iter()
                 .try_fold(Keys::default(), |mut acc, vb| {
                     // TODO: check version
                     // TODO: decrypt key
@@ -132,6 +135,9 @@ impl crdt_enc::key_cryptor::KeyCryptor for KeyHandler {
                 })?;
 
             keys.merge(new_keys);
+
+            let actor = data.info.as_ref().context("info is none")?.actor();
+            let write_ctx = read_ctx.derive_add_ctx(actor);
 
             let op = data.remote_meta.write(
                 VersionBytes::new(

@@ -226,7 +226,7 @@ impl<'a> ::bytes::Buf for VersionBytesBuf<'a> {
         BUF_VERSION_LEN_BYTES + self.content.len() - self.pos
     }
 
-    fn bytes(&self) -> &[u8] {
+    fn chunk(&self) -> &[u8] {
         if self.pos < BUF_VERSION_LEN_BYTES {
             &self.version_len[self.pos..]
         } else {
@@ -244,7 +244,7 @@ impl<'a> ::bytes::Buf for VersionBytesBuf<'a> {
         self.pos += cnt;
     }
 
-    fn bytes_vectored<'b>(&'b self, dst: &mut [IoSlice<'b>]) -> usize {
+    fn chunks_vectored<'b>(&'b self, dst: &mut [IoSlice<'b>]) -> usize {
         // TODO: TESTING!
 
         if dst.len() == 0 {

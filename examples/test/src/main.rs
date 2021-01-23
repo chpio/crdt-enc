@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(1u128);
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     crdt_enc_sodium::init();
 
@@ -44,8 +44,8 @@ async fn main() -> Result<()> {
 
     let op = repo.with_state(|s: &crdts::MVReg<u64, Uuid>| {
         let read_ctx = s.read();
-        let add_ctx = read_ctx.derive_add_ctx(info.actor());
-        let op = s.write(read_ctx.val.into_iter().max().unwrap_or(0) + 1, add_ctx);
+        let new_val = read_ctx.val.iter().copied().max().unwrap_or(0) + 1;
+        let op = s.write(new_val, read_ctx.derive_add_ctx(info.actor()));
         Ok(op)
     })?;
 
