@@ -9,16 +9,16 @@ use crate::{
     storage::Storage,
     utils::{VersionBytes, VersionBytesRef},
 };
-use anyhow::{Context, Error, Result};
-use async_trait::async_trait;
-use crdts::{CmRDT, CvRDT, MVReg, VClock};
-use dyn_clone::DynClone;
-use futures::{
+use ::anyhow::{Context, Error, Result};
+use ::async_trait::async_trait;
+use ::crdts::{CmRDT, CvRDT, MVReg, VClock};
+use ::dyn_clone::DynClone;
+use ::futures::{
     lock::Mutex as AsyncMutex,
     stream::{self, StreamExt, TryStreamExt},
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{
+use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
+use ::std::{
     collections::HashSet,
     convert::Infallible,
     default::Default,
@@ -26,7 +26,7 @@ use std::{
     mem,
     sync::{Arc, Mutex as SyncMutex},
 };
-use uuid::Uuid;
+use ::uuid::Uuid;
 
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0xe834d789_101b_4634_9823_9de990a9051f);
 

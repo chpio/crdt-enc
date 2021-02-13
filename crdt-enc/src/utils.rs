@@ -2,9 +2,9 @@ mod version_bytes;
 
 pub use version_bytes::*;
 
-use crdts::{CmRDT, CvRDT};
-use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
+use ::crdts::{CmRDT, CvRDT};
+use ::serde::{Deserialize, Serialize};
+use ::std::convert::Infallible;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmptyCrdt;

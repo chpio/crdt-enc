@@ -1,7 +1,7 @@
-use bytes::Buf;
-use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, convert::TryFrom, fmt, io::IoSlice};
-use uuid::Uuid;
+use ::bytes::Buf;
+use ::serde::{Deserialize, Serialize};
+use ::std::{borrow::Cow, convert::TryFrom, fmt, io::IoSlice};
+use ::uuid::Uuid;
 
 #[derive(Debug)]
 pub struct VersionError {
