@@ -15,7 +15,6 @@ use async_trait::async_trait;
 use crdts::{CmRDT, CvRDT, MVReg, VClock};
 use dyn_clone::DynClone;
 use futures::{
-    future::BoxFuture,
     lock::Mutex as AsyncMutex,
     stream::{self, StreamExt, TryStreamExt},
 };

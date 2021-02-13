@@ -1,12 +1,7 @@
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
-use crdt_enc::{
-    key_cryptor::KeyCryptor,
-    storage::Storage,
-    utils::{VersionBytes, VersionBytesRef},
-};
-use crdts::{CmRDT, CvRDT};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use crdt_enc::utils::{VersionBytes, VersionBytesRef};
+use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::secretbox;
 use std::{borrow::Cow, fmt::Debug};
 use uuid::Uuid;

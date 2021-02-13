@@ -2,7 +2,6 @@ use anyhow::Result;
 use crdt_enc_gpgme::KeyHandler;
 use crdt_enc_sodium::EncHandler;
 use crdt_enc_tokio::Storage;
-use futures::future::FutureExt;
 use uuid::Uuid;
 
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(1u128);

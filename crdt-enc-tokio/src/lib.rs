@@ -1,27 +1,21 @@
 use ::bytes::Buf;
 use anyhow::{ensure, Context, Error, Result};
 use async_trait::async_trait;
-use crdt_enc::{
-    cryptor::Cryptor,
-    key_cryptor::KeyCryptor,
-    utils::{VersionBytes, VersionBytesRef},
-};
-use crdts::{CmRDT, CvRDT};
+use crdt_enc::utils::{VersionBytes, VersionBytesRef};
 use futures::{
     future::{Either, TryFutureExt},
     stream::{self, Stream, StreamExt, TryStreamExt},
 };
-use serde::{de::DeserializeOwned, Serialize};
 use std::{
     convert::TryFrom,
-    fmt::{Debug, Write},
+    fmt::Debug,
     path::{Path, PathBuf},
     str::FromStr,
 };
 use tiny_keccak::{Hasher, Sha3};
 use tokio::{
     fs,
-    io::{self, AsyncWrite, AsyncWriteExt},
+    io::{self, AsyncWriteExt},
 };
 use tokio_stream::wrappers::ReadDirStream;
 use uuid::Uuid;
@@ -414,9 +408,10 @@ async fn write_content_addressible_file(
     let mut digest = Sha3::v256();
     let mut buf = bytes.buf();
     while buf.has_remaining() {
-        let b = buf.chunk();
-        digest.update(b);
-        buf.advance(b.len());
+        let chunk = buf.chunk();
+        digest.update(chunk);
+        let chunk_len = chunk.len();
+        buf.advance(chunk_len);
     }
     let mut digest_output = [0; 32];
     digest.finalize(&mut digest_output);

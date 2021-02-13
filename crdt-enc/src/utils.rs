@@ -14,7 +14,7 @@ impl CmRDT for EmptyCrdt {
 
     type Validation = Infallible;
 
-    fn validate_op(&self, op: &Self::Op) -> Result<(), Infallible> {
+    fn validate_op(&self, _op: &Self::Op) -> Result<(), Infallible> {
         Ok(())
     }
 
