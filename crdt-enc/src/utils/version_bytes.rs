@@ -159,7 +159,7 @@ impl<'a> TryFrom<&'a [u8]> for VersionBytesRef<'a> {
     type Error = ParseError;
 
     fn try_from(buf: &'a [u8]) -> Result<VersionBytesRef<'a>, ParseError> {
-        if buf.len() < BUF_VERSION_LEN_BYTES {
+        if buf.len() < VERSION_LEN {
             return Err(ParseError::InvalidLength);
         }
 
@@ -167,18 +167,7 @@ impl<'a> TryFrom<&'a [u8]> for VersionBytesRef<'a> {
         version.copy_from_slice(&buf[0..16]);
         let version = Uuid::from_bytes(version);
 
-        let mut len = [0; 8];
-        len.copy_from_slice(&buf[16..24]);
-        let len =
-            usize::try_from(u64::from_le_bytes(len)).map_err(|_| ParseError::InvalidLength)?;
-
-        // TODO: check for max len?
-
-        if buf.len() - BUF_VERSION_LEN_BYTES != len {
-            return Err(ParseError::InvalidLength);
-        }
-
-        Ok(VersionBytesRef::new(version, &buf[BUF_VERSION_LEN_BYTES..]))
+        Ok(VersionBytesRef::new(version, &buf[VERSION_LEN..]))
     }
 }
 
@@ -196,26 +185,20 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-const BUF_VERSION_LEN_BYTES: usize = 16 + 8;
+const VERSION_LEN: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct VersionBytesBuf<'a> {
     pos: usize,
-    version_len: [u8; BUF_VERSION_LEN_BYTES],
+    version: [u8; VERSION_LEN],
     content: &'a [u8],
 }
 
 impl<'a> VersionBytesBuf<'a> {
     pub fn new(version: Uuid, content: &'a [u8]) -> VersionBytesBuf<'a> {
-        let mut version_len = [0; BUF_VERSION_LEN_BYTES];
-        version_len[0..16].copy_from_slice(version.as_bytes());
-
-        let len = u64::try_from(content.len()).expect("Could not convert len (usize) into u64");
-        version_len[16..].copy_from_slice(&len.to_le_bytes());
-
         VersionBytesBuf {
             pos: 0,
-            version_len,
+            version: *version.as_bytes(),
             content,
         }
     }
@@ -223,14 +206,14 @@ impl<'a> VersionBytesBuf<'a> {
 
 impl<'a> ::bytes::Buf for VersionBytesBuf<'a> {
     fn remaining(&self) -> usize {
-        BUF_VERSION_LEN_BYTES + self.content.len() - self.pos
+        VERSION_LEN + self.content.len() - self.pos
     }
 
     fn chunk(&self) -> &[u8] {
-        if self.pos < BUF_VERSION_LEN_BYTES {
-            &self.version_len[self.pos..]
+        if self.pos < VERSION_LEN {
+            &self.version[self.pos..]
         } else {
-            let pos = self.pos - BUF_VERSION_LEN_BYTES;
+            let pos = self.pos - VERSION_LEN;
             if self.content.len() <= pos {
                 &[]
             } else {
@@ -251,8 +234,8 @@ impl<'a> ::bytes::Buf for VersionBytesBuf<'a> {
             return 0;
         }
 
-        if self.pos < BUF_VERSION_LEN_BYTES {
-            dst[0] = IoSlice::new(&self.version_len[self.pos..]);
+        if self.pos < VERSION_LEN {
+            dst[0] = IoSlice::new(&self.version[self.pos..]);
 
             if dst.len() == 1 {
                 1
@@ -261,7 +244,7 @@ impl<'a> ::bytes::Buf for VersionBytesBuf<'a> {
                 2
             }
         } else {
-            let pos = self.pos - BUF_VERSION_LEN_BYTES;
+            let pos = self.pos - VERSION_LEN;
             if self.content.len() <= pos {
                 0
             } else {
