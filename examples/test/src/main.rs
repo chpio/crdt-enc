@@ -4,7 +4,9 @@ use crdt_enc_sodium::EncHandler;
 use crdt_enc_tokio::Storage;
 use uuid::Uuid;
 
-const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(1u128);
+const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0xaadfd5a6_6e19_4b24_a802_4fa27c72f20c);
+
+const SUPPORTED_DATA_VERSIONS: [Uuid; 1] = [CURRENT_DATA_VERSION];
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -20,7 +22,7 @@ async fn main() -> Result<()> {
         cryptor,
         key_cryptor,
         create: true,
-        supported_data_versions: [CURRENT_DATA_VERSION].iter().cloned().collect(),
+        supported_data_versions: SUPPORTED_DATA_VERSIONS.iter().cloned().collect(),
         current_data_version: CURRENT_DATA_VERSION,
     };
     let (repo, info) = crdt_enc::Core::open(open_options).await?;

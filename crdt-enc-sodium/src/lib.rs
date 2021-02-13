@@ -6,11 +6,9 @@ use sodiumoxide::crypto::secretbox;
 use std::{borrow::Cow, fmt::Debug};
 use uuid::Uuid;
 
-// c7f269be-0ff5-4a77-99c3-7c23c96d5cb4
-const DATA_VERSION: Uuid = Uuid::from_u128(0xc7f269be0ff54a7799c37c23c96d5cb4);
+const DATA_VERSION: Uuid = Uuid::from_u128(0xc7f269be_0ff5_4a77_99c3_7c23c96d5cb4);
 
-// 5df28591-439a-4cef-8ca6-8433276cc9ed
-const KEY_VERSION: Uuid = Uuid::from_u128(0x5df28591439a4cef8ca68433276cc9ed);
+const KEY_VERSION: Uuid = Uuid::from_u128(0x5df28591_439a_4cef_8ca6_8433276cc9ed);
 
 pub fn init() {
     sodiumoxide::init().expect("sodium init failed");
