@@ -8,7 +8,7 @@ use crate::{
     cryptor::Cryptor,
     key_cryptor::{Key, KeyCryptor, Keys},
     storage::Storage,
-    utils::VersionBytes,
+    utils::{VersionBytes, VersionBytesRef},
 };
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
@@ -28,6 +28,13 @@ use std::{
     sync::{Arc, Mutex as SyncMutex},
 };
 use uuid::Uuid;
+
+const CURRENT_VERSION: Uuid = Uuid::from_u128(0xe834d789_101b_4634_9823_9de990a9051f);
+
+// needs to be sorted!
+const SUPPORTED_VERSIONS: [Uuid; 1] = [
+    Uuid::from_u128(0xe834d789_101b_4634_9823_9de990a9051f), // current
+];
 
 #[async_trait]
 pub trait CoreSubHandle
@@ -258,7 +265,7 @@ where
             .context("failed getting local meta")?;
         let local_meta: LocalMeta = match local_meta {
             Some(local_meta) => {
-                local_meta.ensure_versions(&core.supported_data_versions)?;
+                local_meta.ensure_versions(&SUPPORTED_VERSIONS)?;
                 rmp_serde::from_read_ref(&local_meta)?
             }
             None => {
@@ -270,11 +277,8 @@ where
                 let local_meta = LocalMeta {
                     local_actor_id: Uuid::new_v4(),
                 };
-                // TODO: use core version
-                let vbox = VersionBytes::new(
-                    core.current_data_version,
-                    rmp_serde::to_vec_named(&local_meta)?,
-                );
+                let vbox =
+                    VersionBytes::new(CURRENT_VERSION, rmp_serde::to_vec_named(&local_meta)?);
 
                 core.storage
                     .store_local_meta(vbox)
@@ -430,15 +434,16 @@ where
             .map(|(name, state)| {
                 let key = key.clone();
                 async move {
-                    // TODO: use "Core"s version because we are storing the state in a wrapper with
-                    // other data, and also store app version
-                    state.ensure_versions(&self.supported_data_versions)?;
+                    state.ensure_versions(&SUPPORTED_VERSIONS)?;
 
                     let clear_text = self
                         .cryptor
                         .decrypt(key.key(), state.as_ref())
                         .await
                         .with_context(|| format!("failed decrypting remote state {}", name))?;
+
+                    let clear_text = VersionBytesRef::from_slice(&clear_text)?;
+                    clear_text.ensure_versions(&self.supported_data_versions)?;
 
                     let state_wrapper: StateWrapper<S> = rmp_serde::from_read_ref(&clear_text)?;
 
@@ -489,16 +494,17 @@ where
             .map(|(actor, version, data)| {
                 let key = key.clone();
                 async move {
-                    // TODO: use cores version
-                    data.ensure_versions(&self.supported_data_versions)?;
+                    data.ensure_versions(&SUPPORTED_VERSIONS)?;
                     let clear_text = self
                         .cryptor
                         .decrypt(key.key(), data.as_ref())
                         .await
                         .unwrap();
 
+                    let clear_text = VersionBytesRef::from_slice(&clear_text)?;
+                    clear_text.ensure_versions(&self.supported_data_versions)?;
+
                     let ops: Vec<_> = rmp_serde::from_read_ref(&clear_text)?;
-                    // TODO: check apps version
 
                     Result::<_, Error>::Ok((actor, version, ops))
                 }
@@ -566,9 +572,7 @@ where
             .context("failed loading remote meta while reading remote metas")?
             .into_iter()
             .map(|(name, vbox)| {
-                // TODO: use "Core"s version because we are storing the state in a wrapper with
-                // other data, and also store app version
-                vbox.ensure_versions(&self.supported_data_versions)?;
+                vbox.ensure_versions(&SUPPORTED_VERSIONS)?;
 
                 let remote_meta: RemoteMeta = rmp_serde::from_read_ref(&vbox)?;
 
@@ -646,8 +650,7 @@ where
     async fn store_remote_meta(self: &Arc<Self>) -> Result<()> {
         let vbox = self.with_mut_data(|data| {
             let bytes = rmp_serde::to_vec_named(&data.remote_meta)?;
-            // TODO: use core version
-            Ok(VersionBytes::new(self.current_data_version, bytes))
+            Ok(VersionBytes::new(CURRENT_VERSION, bytes))
         })?;
 
         let new_name = self.storage.store_remote_meta(vbox).await?;
@@ -668,10 +671,15 @@ where
         let apply_ops_lock = self.apply_ops_lock.lock().await;
 
         let clear_text = rmp_serde::to_vec_named(&ops)?;
+        let clear_text = VersionBytes::new(self.current_data_version, clear_text);
 
         let key = self.with_mut_data(|data| data.keys.latest_key().context("no latest key"))?;
 
-        let data_enc = self.cryptor.encrypt(key.key(), &clear_text).await.unwrap();
+        let data_enc = self
+            .cryptor
+            .encrypt(key.key(), &clear_text.to_vec())
+            .await
+            .unwrap();
 
         // TODO: add key id
         // let block = Block {
@@ -680,8 +688,7 @@ where
         //     data_enc,
         // };
 
-        // TODO: use core version
-        let data_enc = VersionBytes::new(self.current_data_version, data_enc);
+        let data_enc = VersionBytes::new(CURRENT_VERSION, data_enc);
 
         let (actor, version) = self.with_mut_data(|data| {
             let actor = data
