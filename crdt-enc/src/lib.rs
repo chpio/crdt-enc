@@ -31,7 +31,7 @@ use ::uuid::Uuid;
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0xe834d789_101b_4634_9823_9de990a9051f);
 
 // needs to be sorted!
-const SUPPORTED_VERSIONS: [Uuid; 1] = [
+const SUPPORTED_VERSIONS: &[Uuid] = &[
     Uuid::from_u128(0xe834d789_101b_4634_9823_9de990a9051f), // current
 ];
 
@@ -264,7 +264,7 @@ where
             .context("failed getting local meta")?;
         let local_meta: LocalMeta = match local_meta {
             Some(local_meta) => {
-                local_meta.ensure_versions(&SUPPORTED_VERSIONS)?;
+                local_meta.ensure_versions(SUPPORTED_VERSIONS)?;
                 rmp_serde::from_read_ref(&local_meta)?
             }
             None => {
@@ -433,7 +433,7 @@ where
             .map(|(name, state)| {
                 let key = key.clone();
                 async move {
-                    state.ensure_versions(&SUPPORTED_VERSIONS)?;
+                    state.ensure_versions(SUPPORTED_VERSIONS)?;
 
                     let clear_text = self
                         .cryptor
@@ -493,7 +493,7 @@ where
             .map(|(actor, version, data)| {
                 let key = key.clone();
                 async move {
-                    data.ensure_versions(&SUPPORTED_VERSIONS)?;
+                    data.ensure_versions(SUPPORTED_VERSIONS)?;
                     let clear_text = self
                         .cryptor
                         .decrypt(key.key(), data.as_ref())
@@ -571,7 +571,7 @@ where
             .context("failed loading remote meta while reading remote metas")?
             .into_iter()
             .map(|(name, vbox)| {
-                vbox.ensure_versions(&SUPPORTED_VERSIONS)?;
+                vbox.ensure_versions(SUPPORTED_VERSIONS)?;
 
                 let remote_meta: RemoteMeta = rmp_serde::from_read_ref(&vbox)?;
 

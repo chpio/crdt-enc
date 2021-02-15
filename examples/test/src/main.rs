@@ -6,7 +6,7 @@ use ::uuid::Uuid;
 
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0xaadfd5a6_6e19_4b24_a802_4fa27c72f20c);
 
-const SUPPORTED_DATA_VERSIONS: [Uuid; 1] = [CURRENT_DATA_VERSION];
+const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
