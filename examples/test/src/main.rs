@@ -25,7 +25,8 @@ async fn main() -> Result<()> {
         supported_data_versions: SUPPORTED_DATA_VERSIONS.iter().cloned().collect(),
         current_data_version: CURRENT_DATA_VERSION,
     };
-    let (repo, info) = crdt_enc::Core::open(open_options).await?;
+    let repo = crdt_enc::Core::open(open_options).await?;
+    let info = repo.info();
 
     // let actor_id = repo.actor_id();
 

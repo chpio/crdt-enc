@@ -1,4 +1,4 @@
-use crate::{utils::VersionBytes, CoreSubHandle, Info};
+use crate::{utils::VersionBytes, CoreSubHandle};
 use ::anyhow::Result;
 use ::async_trait::async_trait;
 use ::crdts::MVReg;
@@ -11,10 +11,6 @@ where
     Self: 'static + Debug + Send + Sync + Sized,
 {
     async fn init(&self, _core: &dyn CoreSubHandle) -> Result<()> {
-        Ok(())
-    }
-
-    async fn set_info(&self, _info: &Info) -> Result<()> {
         Ok(())
     }
 

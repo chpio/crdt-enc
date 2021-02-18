@@ -40,6 +40,8 @@ pub trait CoreSubHandle
 where
     Self: 'static + Debug + Send + Sync + DynClone,
 {
+    fn info(&self) -> Info;
+
     async fn compact(&self) -> Result<()>;
     async fn read_remote(&self) -> Result<()>;
     async fn read_remote_meta(&self) -> Result<()>;
@@ -72,6 +74,10 @@ where
     C: Cryptor,
     KC: KeyCryptor,
 {
+    fn info(&self) -> Info {
+        self.info()
+    }
+
     async fn compact(&self) -> Result<()> {
         self.compact().await
     }
@@ -206,6 +212,7 @@ struct CoreMutData<S> {
     state: StateWrapper<S>,
     read_states: HashSet<String>,
     read_remote_metas: HashSet<String>,
+    info: Option<Info>,
 }
 
 impl<S, ST, C, KC> Core<S, ST, C, KC>
@@ -225,7 +232,7 @@ where
     C: Cryptor,
     KC: KeyCryptor,
 {
-    pub async fn open(options: OpenOptions<ST, C, KC>) -> Result<(Arc<Self>, Info)> {
+    pub async fn open(options: OpenOptions<ST, C, KC>) -> Result<Arc<Self>> {
         let core_data = SyncMutex::new(CoreMutData {
             local_meta: None,
             remote_meta: RemoteMeta::default(),
@@ -236,6 +243,7 @@ where
             },
             read_states: HashSet::new(),
             read_remote_metas: HashSet::new(),
+            info: None,
         });
 
         let mut supported_data_versions = options.supported_data_versions;
@@ -250,12 +258,6 @@ where
             data: core_data,
             apply_ops_lock: AsyncMutex::new(()),
         });
-
-        futures::try_join![
-            core.storage.init(&core),
-            core.cryptor.init(&core),
-            core.key_cryptor.init(&core),
-        ]?;
 
         let local_meta = core
             .storage
@@ -293,13 +295,14 @@ where
 
         core.with_mut_data(|data| {
             data.local_meta = Some(local_meta);
+            data.info = Some(info.clone());
             Ok(())
         })?;
 
         futures::try_join![
-            core.storage.set_info(&info),
-            core.cryptor.set_info(&info),
-            core.key_cryptor.set_info(&info),
+            core.storage.init(&core),
+            core.cryptor.init(&core),
+            core.key_cryptor.init(&core),
         ]?;
 
         core.read_remote_meta_(true).await?;
@@ -317,7 +320,19 @@ where
             core.key_cryptor.set_keys(keys).await?;
         }
 
-        Ok((core, info))
+        Ok(core)
+    }
+
+    pub fn info(self: &Arc<Self>) -> Info {
+        self.with_mut_data(|data| {
+            let info = data
+                .info
+                .as_ref()
+                .expect("info not set, yet. Do not call this fn in the init phase")
+                .clone();
+            Ok(info)
+        })
+        .unwrap()
     }
 
     fn with_mut_data<F, R>(self: &Arc<Self>, f: F) -> Result<R>

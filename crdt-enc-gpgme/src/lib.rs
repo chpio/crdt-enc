@@ -60,16 +60,8 @@ impl crdt_enc::key_cryptor::KeyCryptor for KeyHandler {
             .data
             .lock()
             .map_err(|err| Error::msg(err.to_string()))?;
+        data.info = Some(core.info());
         data.core = Some(dyn_clone::clone_box(core));
-        Ok(())
-    }
-
-    async fn set_info(&self, info: &Info) -> Result<()> {
-        let mut data = self
-            .data
-            .lock()
-            .map_err(|err| Error::msg(err.to_string()))?;
-        data.info = Some(info.clone());
         Ok(())
     }
 
