@@ -212,7 +212,6 @@ struct CoreMutData<S> {
     state: StateWrapper<S>,
     read_states: HashSet<String>,
     read_remote_metas: HashSet<String>,
-    info: Option<Info>,
 }
 
 impl<S, ST, C, KC> Core<S, ST, C, KC>
@@ -243,7 +242,6 @@ where
             },
             read_states: HashSet::new(),
             read_remote_metas: HashSet::new(),
-            info: None,
         });
 
         let mut supported_data_versions = options.supported_data_versions;
@@ -289,13 +287,10 @@ where
             }
         };
 
-        let info = Info {
-            actor: local_meta.local_actor_id,
-        };
+        let actor = local_meta.local_actor_id;
 
         core.with_mut_data(|data| {
             data.local_meta = Some(local_meta);
-            data.info = Some(info.clone());
             Ok(())
         })?;
 
@@ -313,7 +308,7 @@ where
             let new_key = core.cryptor.gen_key().await?;
 
             let keys = core.with_mut_data(|data| {
-                data.keys.insert_latest_key(info.actor(), Key::new(new_key));
+                data.keys.insert_latest_key(actor, Key::new(new_key));
                 Ok(data.keys.clone())
             })?;
 
@@ -325,12 +320,12 @@ where
 
     pub fn info(self: &Arc<Self>) -> Info {
         self.with_mut_data(|data| {
-            let info = data
-                .info
+            let actor = data
+                .local_meta
                 .as_ref()
                 .expect("info not set, yet. Do not call this fn in the init phase")
-                .clone();
-            Ok(info)
+                .local_actor_id;
+            Ok(Info { actor })
         })
         .unwrap()
     }
