@@ -16,6 +16,7 @@ use ::dyn_clone::DynClone;
 use ::futures::{
     lock::Mutex as AsyncMutex,
     stream::{self, StreamExt, TryStreamExt},
+    task,
 };
 use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
 use ::std::{
@@ -38,7 +39,7 @@ const SUPPORTED_VERSIONS: &[Uuid] = &[
 #[async_trait]
 pub trait CoreSubHandle
 where
-    Self: 'static + Debug + Send + Sync + DynClone,
+    Self: 'static + Debug + Send + Sync + DynClone + task::Spawn,
 {
     fn info(&self) -> Info;
 
@@ -54,6 +55,16 @@ where
         &self,
         remote_meta: MVReg<VersionBytes, Uuid>,
     ) -> Result<()>;
+}
+
+impl<S, ST, C, KC> task::Spawn for Core<S, ST, C, KC> {
+    fn spawn_obj(&self, future: task::FutureObj<'static, ()>) -> Result<(), task::SpawnError> {
+        self.spawn.spawn_obj(future)
+    }
+
+    fn status(&self) -> Result<(), task::SpawnError> {
+        self.spawn.status()
+    }
 }
 
 #[async_trait]
@@ -190,15 +201,17 @@ where
 //     }
 // }
 
+pub trait CoreSpawn: task::Spawn + Debug + Send + Sync {}
+
 #[derive(Debug)]
 pub struct Core<S, ST, C, KC> {
+    spawn: Box<dyn CoreSpawn>,
     storage: ST,
     cryptor: C,
     key_cryptor: KC,
     // use sync `std::sync::Mutex` here because it has less overhead than async mutex, we are
     // holding it for a very shot time and do not `.await` while the lock is held.
     data: SyncMutex<CoreMutData<S>>,
-    // task_mgr: task::TaskMgr,
     supported_data_versions: Vec<Uuid>,
     current_data_version: Uuid,
     apply_ops_lock: AsyncMutex<()>,
@@ -248,6 +261,7 @@ where
         supported_data_versions.sort_unstable();
 
         let core = Arc::new(Core {
+            spawn: options.spawn,
             storage: options.storage,
             cryptor: options.cryptor,
             key_cryptor: options.key_cryptor,
@@ -729,6 +743,7 @@ where
 }
 
 pub struct OpenOptions<ST, C, KC> {
+    pub spawn: Box<dyn CoreSpawn>,
     pub storage: ST,
     pub cryptor: C,
     pub key_cryptor: KC,
