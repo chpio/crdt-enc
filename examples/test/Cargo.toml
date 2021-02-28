@@ -10,7 +10,7 @@ crdt-enc-tokio = {path="../../crdt-enc-tokio"}
 crdt-enc-sodium = {path="../../crdt-enc-sodium"}
 crdt-enc-gpgme = {path="../../crdt-enc-gpgme"}
 uuid = {version = "0.8", features = ["serde", "v4"]}
-crdts = "5"
+crdts = "6.2"
 tokio = {version = "1", features = ["macros", "rt"]}
 anyhow = "1"
 futures = "0.3"

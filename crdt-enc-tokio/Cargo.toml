@@ -5,7 +5,7 @@ authors = ["Thomas Heck <t@b128.net>"]
 edition = "2018"
 
 [dependencies]
-crdts = "5"
+crdts = "6.2"
 serde = "1"
 async-trait = "0.1"
 futures = "0.3"

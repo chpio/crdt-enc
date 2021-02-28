@@ -5,7 +5,7 @@ authors = ["Thomas Heck <t@b128.net>"]
 edition = "2018"
 
 [dependencies]
-crdts = "5"
+crdts = "6.2"
 serde = "1"
 serde_bytes = "0.11"
 rmp-serde = "0.15"

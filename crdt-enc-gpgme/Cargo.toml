@@ -11,7 +11,7 @@ rmp-serde = "0.15"
 async-trait = "0.1"
 anyhow = "1"
 uuid = "0.8"
-crdts = "5"
+crdts = "6.2"
 gpgme = "0.9"
 dyn-clone = "1"
 
