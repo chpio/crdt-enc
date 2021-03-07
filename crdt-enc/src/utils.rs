@@ -6,7 +6,7 @@ use ::anyhow::{Context, Result};
 use ::crdts::{ctx::ReadCtx, CmRDT, CvRDT, MVReg};
 use ::futures::{stream, Future, FutureExt, StreamExt, TryStreamExt};
 use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
-use ::std::convert::Infallible;
+use ::std::{convert::Infallible, fmt::Debug, sync::Mutex as SyncMutex};
 use ::uuid::Uuid;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -124,4 +124,34 @@ where
     let op = reg.write(vb, read_ctx.derive_add_ctx(actor));
     reg.apply(op);
     Ok(())
+}
+
+/// Prevents `await`s while the lock is held. Awaiting could cause deadlocking.
+#[derive(Debug)]
+pub struct LockBox<T> {
+    inner: SyncMutex<T>,
+}
+
+impl<T> LockBox<T> {
+    pub fn new(val: T) -> LockBox<T> {
+        LockBox {
+            inner: SyncMutex::new(val),
+        }
+    }
+
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut data = self.inner.lock().expect("Unable to lock LockBox");
+        f(&mut *data)
+    }
+
+    /// Utility `LockBox::with` function, that enforces a `anyhow::Result` return type.
+    pub fn try_with<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut T) -> Result<R>,
+    {
+        self.with(f)
+    }
 }
