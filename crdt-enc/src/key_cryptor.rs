@@ -62,7 +62,10 @@ impl Keys {
             .read()
             .val
             .into_iter()
-            .flat_map(move |id| keys.take(&id))
+            .map(move |id| {
+                keys.take(&id)
+                    .unwrap_or_else(|| panic!("Could not find key for latest key id {}", id))
+            })
             .min()
     }
 
