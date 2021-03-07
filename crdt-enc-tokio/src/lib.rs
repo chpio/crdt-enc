@@ -7,7 +7,6 @@ use ::futures::{
     stream::{self, Stream, StreamExt, TryStreamExt},
 };
 use ::std::{
-    convert::TryFrom,
     fmt::Debug,
     path::{Path, PathBuf},
     str::FromStr,
@@ -55,7 +54,7 @@ impl crdt_enc::storage::Storage for Storage {
             .with_context(|| format!("failed reading local meta file {}", path.display()))?;
         bytes
             .map(|bytes| {
-                let lm = VersionBytes::try_from(bytes.as_ref()).with_context(|| {
+                let lm = VersionBytes::deserialize(&bytes).with_context(|| {
                     format!("failed parsing local meta file {}", path.display())
                 })?;
                 Ok(lm)
@@ -103,7 +102,7 @@ impl crdt_enc::storage::Storage for Storage {
                 let bytes = fs::read(&path).await.with_context(|| {
                     format!("failed reading remote meta file {}", path.display())
                 })?;
-                let rm = VersionBytes::try_from(bytes.as_ref()).with_context(|| {
+                let rm = VersionBytes::deserialize(&bytes).with_context(|| {
                     format!("failed parsing remote meta file {}", path.display())
                 })?;
                 Ok((name, rm))
@@ -163,7 +162,7 @@ impl crdt_enc::storage::Storage for Storage {
                 let block = fs::read(&path)
                     .await
                     .with_context(|| format!("failed reading state file {}", path.display()))?;
-                let block = VersionBytes::try_from(block.as_ref())
+                let block = VersionBytes::deserialize(&block)
                     .with_context(|| format!("failed parsing state file {}", path.display()))?;
                 Ok((name, block))
             }
@@ -239,7 +238,7 @@ impl crdt_enc::storage::Storage for Storage {
                 return Ok(None);
             };
 
-            let data = VersionBytes::try_from(bytes.as_ref())
+            let data = VersionBytes::deserialize(&bytes)
                 .with_context(|| format!("failed parsing op file {}", path.display()))?;
 
             Ok(Some((actor, version, data)))

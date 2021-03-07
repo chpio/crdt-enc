@@ -1,6 +1,5 @@
 mod version_bytes;
 
-use futures::TryFutureExt;
 pub use version_bytes::*;
 
 use ::anyhow::{Context, Result};

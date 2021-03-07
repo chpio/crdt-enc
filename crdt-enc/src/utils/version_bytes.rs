@@ -1,6 +1,6 @@
 use ::bytes::Buf;
 use ::serde::{Deserialize, Serialize};
-use ::std::{borrow::Cow, convert::TryFrom, fmt, io::IoSlice};
+use ::std::{borrow::Cow, fmt, io::IoSlice};
 use ::uuid::Uuid;
 
 #[derive(Debug)]
@@ -41,26 +41,16 @@ impl VersionBytes {
     }
 
     pub fn ensure_version(&self, version: Uuid) -> Result<(), VersionError> {
-        if self.0 != version {
-            Err(VersionError {
-                expected: vec![version],
-                got: self.0,
-            })
-        } else {
-            Ok(())
-        }
+        self.as_version_bytes_ref().ensure_version(version)
     }
 
     /// `versions` needs to be sorted!
     pub fn ensure_versions(&self, versions: &[Uuid]) -> Result<(), VersionError> {
-        if versions.binary_search(&self.0).is_err() {
-            Err(VersionError {
-                expected: versions.to_owned(),
-                got: self.0,
-            })
-        } else {
-            Ok(())
-        }
+        self.as_version_bytes_ref().ensure_versions(versions)
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.1
     }
 
     pub fn as_version_bytes_ref(&self) -> VersionBytesRef<'_> {
@@ -71,16 +61,12 @@ impl VersionBytes {
         VersionBytesBuf::new(self.0, &self.1)
     }
 
-    pub fn from_slice(slice: &[u8]) -> Result<VersionBytes, ParseError> {
-        TryFrom::try_from(slice)
+    pub fn deserialize(slice: &[u8]) -> Result<VersionBytes, ParseError> {
+        Ok(VersionBytesRef::deserialize(slice)?.into())
     }
 
-    pub fn to_vec(&self) -> Vec<u8> {
-        self.as_version_bytes_ref().to_vec()
-    }
-
-    pub fn into_inner(self) -> Vec<u8> {
-        self.1
+    pub fn serialize(&self) -> Vec<u8> {
+        self.as_version_bytes_ref().serialize()
     }
 }
 
@@ -99,14 +85,6 @@ impl From<VersionBytesRef<'_>> for VersionBytes {
 impl AsRef<[u8]> for VersionBytes {
     fn as_ref(&self) -> &[u8] {
         self.1.as_ref()
-    }
-}
-
-impl TryFrom<&[u8]> for VersionBytes {
-    type Error = ParseError;
-
-    fn try_from(buf: &[u8]) -> Result<VersionBytes, ParseError> {
-        Ok(VersionBytesRef::try_from(buf)?.into())
     }
 }
 
@@ -154,11 +132,19 @@ impl<'a> VersionBytesRef<'a> {
         VersionBytesBuf::new(self.0, &self.1)
     }
 
-    pub fn from_slice(slice: &'a [u8]) -> Result<VersionBytesRef<'a>, ParseError> {
-        TryFrom::try_from(slice)
+    pub fn deserialize(slice: &'a [u8]) -> Result<VersionBytesRef<'a>, ParseError> {
+        if slice.len() < VERSION_LEN {
+            return Err(ParseError::InvalidLength);
+        }
+
+        let mut version = [0; 16];
+        version.copy_from_slice(&slice[0..16]);
+        let version = Uuid::from_bytes(version);
+
+        Ok(VersionBytesRef::new(version, &slice[VERSION_LEN..]))
     }
 
-    pub fn to_vec(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Vec<u8> {
         let mut buf = self.buf();
         let mut vec = Vec::with_capacity(buf.remaining());
         while buf.has_remaining() {
@@ -180,22 +166,6 @@ impl<'a> AsRef<[u8]> for VersionBytesRef<'a> {
 impl<'a> From<&'a VersionBytes> for VersionBytesRef<'a> {
     fn from(v: &'a VersionBytes) -> VersionBytesRef<'a> {
         VersionBytesRef::new(v.0, &v.1)
-    }
-}
-
-impl<'a> TryFrom<&'a [u8]> for VersionBytesRef<'a> {
-    type Error = ParseError;
-
-    fn try_from(buf: &'a [u8]) -> Result<VersionBytesRef<'a>, ParseError> {
-        if buf.len() < VERSION_LEN {
-            return Err(ParseError::InvalidLength);
-        }
-
-        let mut version = [0; 16];
-        version.copy_from_slice(&buf[0..16]);
-        let version = Uuid::from_bytes(version);
-
-        Ok(VersionBytesRef::new(version, &buf[VERSION_LEN..]))
     }
 }
 

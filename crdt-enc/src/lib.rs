@@ -465,7 +465,7 @@ where
                         .await
                         .with_context(|| format!("failed decrypting remote state {}", name))?;
 
-                    let clear_text = VersionBytesRef::from_slice(&clear_text)?;
+                    let clear_text = VersionBytesRef::deserialize(&clear_text)?;
                     clear_text.ensure_versions(&self.supported_data_versions)?;
 
                     let state_wrapper: StateWrapper<S> = rmp_serde::from_read_ref(&clear_text)?;
@@ -524,7 +524,7 @@ where
                         .await
                         .unwrap();
 
-                    let clear_text = VersionBytesRef::from_slice(&clear_text)?;
+                    let clear_text = VersionBytesRef::deserialize(&clear_text)?;
                     clear_text.ensure_versions(&self.supported_data_versions)?;
 
                     let ops: Vec<_> = rmp_serde::from_read_ref(&clear_text)?;
@@ -700,7 +700,7 @@ where
 
         let data_enc = self
             .cryptor
-            .encrypt(key.key(), &clear_text.to_vec())
+            .encrypt(key.key(), &clear_text.serialize())
             .await
             .unwrap();
 
