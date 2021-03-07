@@ -78,6 +78,10 @@ impl VersionBytes {
     pub fn to_vec(&self) -> Vec<u8> {
         self.as_version_bytes_ref().to_vec()
     }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.1
+    }
 }
 
 impl From<VersionBytes> for Vec<u8> {
