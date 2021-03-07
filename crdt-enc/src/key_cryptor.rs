@@ -4,7 +4,7 @@ use crate::{
 };
 use ::anyhow::Result;
 use ::async_trait::async_trait;
-use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};
+use ::crdts::{ctx::ReadCtx, CmRDT, CvRDT, MVReg, Orswot};
 use ::serde::{Deserialize, Serialize};
 use ::std::{
     borrow::Borrow,
@@ -28,7 +28,8 @@ where
         Ok(())
     }
 
-    async fn set_keys(&self, keys: Keys) -> Result<()>;
+    /// It needs to give a new `ReadCtx<Keys>` to the core (`core.set_keys`)
+    async fn set_keys(&self, keys: ReadCtx<Keys, Uuid>) -> Result<()>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

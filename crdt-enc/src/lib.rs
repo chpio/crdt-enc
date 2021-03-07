@@ -11,7 +11,7 @@ use crate::{
 };
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
-use ::crdts::{CmRDT, CvRDT, MVReg, VClock};
+use ::crdts::{ctx::ReadCtx, CmRDT, CvRDT, MVReg, VClock};
 use ::dyn_clone::DynClone;
 use ::futures::{
     lock::Mutex as AsyncMutex,
@@ -47,7 +47,7 @@ where
     async fn read_remote(&self) -> Result<()>;
     async fn read_remote_meta(&self) -> Result<()>;
 
-    async fn set_keys(&self, keys: Keys) -> Result<()>;
+    async fn set_keys(&self, keys: ReadCtx<Keys, Uuid>) -> Result<()>;
 
     async fn set_remote_meta_storage(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
     async fn set_remote_meta_cryptor(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
@@ -101,7 +101,7 @@ where
         self.read_remote_meta().await
     }
 
-    async fn set_keys(&self, keys: Keys) -> Result<()> {
+    async fn set_keys(&self, keys: ReadCtx<Keys, Uuid>) -> Result<()> {
         self.set_keys(keys).await
     }
 
@@ -221,7 +221,7 @@ pub struct Core<S, ST, C, KC> {
 struct CoreMutData<S> {
     local_meta: Option<LocalMeta>,
     remote_meta: RemoteMeta,
-    keys: Keys,
+    keys: Option<ReadCtx<Keys, Uuid>>,
     state: StateWrapper<S>,
     read_states: HashSet<String>,
     read_remote_metas: HashSet<String>,
@@ -248,7 +248,7 @@ where
         let core_data = SyncMutex::new(CoreMutData {
             local_meta: None,
             remote_meta: RemoteMeta::default(),
-            keys: Keys::default(),
+            keys: None,
             state: StateWrapper {
                 next_op_versions: Default::default(),
                 state: Default::default(),
@@ -316,17 +316,19 @@ where
 
         core.read_remote_meta_(true).await?;
 
-        let insert_new_key = core.with_mut_data(|data| Ok(data.keys.latest_key().is_none()))?;
-
+        let insert_new_key =
+            core.with_mut_data(|data| Ok(data.keys.as_ref().unwrap().val.latest_key().is_none()))?;
         if insert_new_key {
             let new_key = core.cryptor.gen_key().await?;
 
-            let keys = core.with_mut_data(|data| {
-                data.keys.insert_latest_key(actor, Key::new(new_key));
-                Ok(data.keys.clone())
+            let keys_ctx = core.with_mut_data(|data| {
+                let mut keys_ctx = data.keys.take().unwrap();
+                keys_ctx.val.insert_latest_key(actor, Key::new(new_key));
+                Ok(keys_ctx)
             })?;
 
-            core.key_cryptor.set_keys(keys).await?;
+            // give keys to kc, it gives us a new key ctx back
+            core.key_cryptor.set_keys(keys_ctx).await?;
         }
 
         Ok(core)
@@ -379,7 +381,13 @@ where
                 .map(|dot| (dot.actor.clone(), dot.counter - 1))
                 .collect();
 
-            let key = data.keys.latest_key().context("no latest key")?;
+            let key = data
+                .keys
+                .as_ref()
+                .unwrap()
+                .val
+                .latest_key()
+                .context("no latest key")?;
 
             Ok((clear_text, states_to_remove, ops_to_remove, key))
         })?;
@@ -409,9 +417,9 @@ where
         Ok(())
     }
 
-    async fn set_keys(self: &Arc<Self>, keys: Keys) -> Result<()> {
+    async fn set_keys(self: &Arc<Self>, keys: ReadCtx<Keys, Uuid>) -> Result<()> {
         self.with_mut_data(|data| {
-            data.keys.merge(keys);
+            data.keys = Some(keys);
             Ok(())
         })?;
 
@@ -442,7 +450,13 @@ where
                 .filter(|name| !data.read_states.contains(name))
                 .collect();
 
-            let key = data.keys.latest_key().context("no latest key")?;
+            let key = data
+                .keys
+                .as_ref()
+                .unwrap()
+                .val
+                .latest_key()
+                .context("no latest key")?;
 
             Ok((states_to_read, key))
         })?;
@@ -506,7 +520,13 @@ where
                 .map(|actor| (actor, data.state.next_op_versions.get(&actor)))
                 .collect();
 
-            let key = data.keys.latest_key().context("no latest key")?;
+            let key = data
+                .keys
+                .as_ref()
+                .unwrap()
+                .val
+                .latest_key()
+                .context("no latest key")?;
 
             Ok((ops_to_read, key))
         })?;
@@ -696,7 +716,14 @@ where
         let clear_text = rmp_serde::to_vec_named(&ops)?;
         let clear_text = VersionBytes::new(self.current_data_version, clear_text);
 
-        let key = self.with_mut_data(|data| data.keys.latest_key().context("no latest key"))?;
+        let key = self.with_mut_data(|data| {
+            data.keys
+                .as_ref()
+                .unwrap()
+                .val
+                .latest_key()
+                .context("no latest key")
+        })?;
 
         let data_enc = self
             .cryptor

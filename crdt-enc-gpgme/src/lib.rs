@@ -1,10 +1,22 @@
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
-use ::crdt_enc::{key_cryptor::Keys, utils::VersionBytes, CoreSubHandle, Info};
-use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};
+use ::crdt_enc::{
+    key_cryptor::Keys,
+    utils::VersionBytes,
+    utils::{decode_version_bytes_mvreg_custom, encode_version_bytes_mvreg_custom},
+    CoreSubHandle, Info,
+};
+use ::crdts::{ctx::ReadCtx, CvRDT, MVReg, Orswot};
 use ::serde::{Deserialize, Serialize};
 use ::std::{convert::Infallible, fmt::Debug, sync::Mutex as SyncMutex};
 use ::uuid::Uuid;
+
+const CURRENT_VERSION: Uuid = Uuid::from_u128(0xe69cb68e_7fbb_41aa_8d22_87eace7a04c9);
+
+// needs to be sorted!
+const SUPPORTED_VERSIONS: &[Uuid] = &[
+    Uuid::from_u128(0xe69cb68e_7fbb_41aa_8d22_87eace7a04c9), // current
+];
 
 pub fn init() {
     gpgme::init();
@@ -69,7 +81,7 @@ impl crdt_enc::key_cryptor::KeyCryptor for KeyHandler {
         &self,
         new_remote_meta: Option<MVReg<VersionBytes, Uuid>>,
     ) -> Result<()> {
-        let (keys, core) = {
+        let (remote_meta, core) = {
             let mut data = self
                 .data
                 .lock()
@@ -79,67 +91,47 @@ impl crdt_enc::key_cryptor::KeyCryptor for KeyHandler {
                 data.remote_meta.merge(new_remote_meta);
             }
 
-            let keys = data.remote_meta.read().val.into_iter().try_fold(
-                Keys::default(),
-                |mut acc, vb| {
-                    // TODO: check version
-                    // TODO: decrypt key
-                    let keys = rmp_serde::from_read_ref(&vb).context("")?;
-                    acc.merge(keys);
-                    Result::<_, Error>::Ok(acc)
-                },
-            )?;
-
-            let core = dyn_clone::clone_box(&**data.core.as_ref().context("core is none")?);
-
-            (keys, core)
-        };
-
-        core.set_keys(keys).await?;
-
-        Ok(())
-    }
-
-    async fn set_keys(&self, new_keys: Keys) -> Result<()> {
-        let (rm, core) = {
-            let mut data = self
-                .data
-                .lock()
-                .map_err(|err| Error::msg(err.to_string()))?;
-
-            let read_ctx = data.remote_meta.read();
-
-            let mut keys = read_ctx
-                .val
-                .iter()
-                .try_fold(Keys::default(), |mut acc, vb| {
-                    // TODO: check version
-                    // TODO: decrypt key
-                    let keys = rmp_serde::from_read_ref(&vb).context("")?;
-                    acc.merge(keys);
-                    Result::<_, Error>::Ok(acc)
-                })?;
-
-            keys.merge(new_keys);
-
-            let actor = data.info.as_ref().context("info is none")?.actor();
-            let write_ctx = read_ctx.derive_add_ctx(actor);
-
-            let op = data.remote_meta.write(
-                VersionBytes::new(
-                    // TODO
-                    Uuid::nil(),
-                    rmp_serde::to_vec_named(&keys)?,
-                ),
-                write_ctx,
-            );
-            data.remote_meta.apply(op);
-
             let core = dyn_clone::clone_box(&**data.core.as_ref().context("core is none")?);
 
             (data.remote_meta.clone(), core)
         };
 
+        let keys_ctx =
+            decode_version_bytes_mvreg_custom(&remote_meta, SUPPORTED_VERSIONS, |buf| async move {
+                // TODO: decrypt key
+                Ok(buf)
+            })
+            .await?;
+
+        core.set_keys(keys_ctx).await?;
+
+        Ok(())
+    }
+
+    async fn set_keys(&self, new_keys: ReadCtx<Keys, Uuid>) -> Result<()> {
+        let (mut rm, core) = {
+            let data = self
+                .data
+                .lock()
+                .map_err(|err| Error::msg(err.to_string()))?;
+
+            let core = dyn_clone::clone_box(&**data.core.as_ref().context("core is none")?);
+            (data.remote_meta.clone(), core)
+        };
+
+        encode_version_bytes_mvreg_custom(
+            &mut rm,
+            new_keys,
+            core.info().actor(),
+            CURRENT_VERSION,
+            |buf| async move {
+                // TODO: encrypt key
+                Ok(buf)
+            },
+        )
+        .await?;
+
+        self.set_remote_meta(Some(rm.clone())).await?;
         core.set_remote_meta_key_cryptor(rm).await?;
 
         Ok(())
