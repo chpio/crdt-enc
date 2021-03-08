@@ -3,7 +3,7 @@
 members = [
     "crdt-enc",
     "crdt-enc-gpgme",
-    "crdt-enc-sodium",
+    "crdt-enc-xchacha20poly1305",
     "crdt-enc-tokio",
     "examples/*",
 ]

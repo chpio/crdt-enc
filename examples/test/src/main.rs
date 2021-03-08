@@ -1,7 +1,7 @@
 use ::anyhow::Result;
 use ::crdt_enc_gpgme::KeyHandler;
-use ::crdt_enc_sodium::EncHandler;
 use ::crdt_enc_tokio::Storage;
+use ::crdt_enc_xchacha20poly1305::EncHandler;
 use ::futures::task;
 use ::uuid::Uuid;
 
@@ -23,8 +23,6 @@ impl task::Spawn for TokioSpawn {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    crdt_enc_sodium::init();
-
     let data_dir = std::fs::canonicalize("./").unwrap().join("data");
 
     let storage = Storage::new(data_dir.join("local"), data_dir.join("remote"))?;

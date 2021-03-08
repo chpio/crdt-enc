@@ -15,7 +15,6 @@
                     name = "crdt-enc";
                     buildInputs = [
                         pkgs.gpgme
-                        pkgs.libsodium
 
                         pkgs.cargo
                         pkgs.rustc

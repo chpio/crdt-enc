@@ -1,8 +1,12 @@
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
+use ::chacha20poly1305::{
+    aead::{Aead, NewAead},
+    Key, XChaCha20Poly1305, XNonce,
+};
 use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
+use ::rand::{thread_rng, RngCore};
 use ::serde::{Deserialize, Serialize};
-use ::sodiumoxide::crypto::secretbox;
 use ::std::{borrow::Cow, fmt::Debug};
 use ::uuid::Uuid;
 
@@ -10,9 +14,8 @@ const DATA_VERSION: Uuid = Uuid::from_u128(0xc7f269be_0ff5_4a77_99c3_7c23c96d5cb
 
 const KEY_VERSION: Uuid = Uuid::from_u128(0x5df28591_439a_4cef_8ca6_8433276cc9ed);
 
-pub fn init() {
-    sodiumoxide::init().expect("sodium init failed");
-}
+const KEY_LEN: usize = 32;
+const NONCE_LEN: usize = 24;
 
 #[derive(Debug)]
 pub struct EncHandler;
@@ -26,20 +29,32 @@ impl EncHandler {
 #[async_trait]
 impl crdt_enc::cryptor::Cryptor for EncHandler {
     async fn gen_key(&self) -> Result<VersionBytes> {
-        let key = secretbox::gen_key();
-        Ok(VersionBytes::new(KEY_VERSION, key.as_ref().into()))
+        let mut key = [0u8; KEY_LEN];
+        thread_rng()
+            .try_fill_bytes(&mut key)
+            .context("Unable to get random data for secret key")?;
+        Ok(VersionBytes::new(KEY_VERSION, key.into()))
     }
 
     async fn encrypt(&self, key: VersionBytesRef<'_>, clear_text: &[u8]) -> Result<Vec<u8>> {
         key.ensure_version(KEY_VERSION)
             .context("not matching key version")?;
-        let key = secretbox::Key::from_slice(key.as_ref()).context("invalid key length")?;
-
-        let nonce = secretbox::gen_nonce();
-        let enc_data = secretbox::seal(clear_text, &nonce, &key);
+        if key.as_ref().len() != KEY_LEN {
+            return Err(Error::msg("Invalid key length"));
+        }
+        let key = Key::from_slice(key.as_ref());
+        let aead = XChaCha20Poly1305::new(key);
+        let mut nonce = [0u8; NONCE_LEN];
+        thread_rng()
+            .try_fill_bytes(&mut nonce)
+            .context("Unable to get random data for nonce")?;
+        let xnonce = XNonce::from_slice(&nonce);
+        let enc_data = aead
+            .encrypt(xnonce, clear_text)
+            .context("Encryption failed")?;
         let enc_box = EncBox {
-            nonce,
-            enc_data: enc_data.into(),
+            nonce: Cow::Borrowed(nonce.as_ref()),
+            enc_data: Cow::Owned(enc_data),
         };
         let enc_box_bytes =
             rmp_serde::to_vec_named(&enc_box).context("failed to encode encryption box")?;
@@ -52,25 +67,34 @@ impl crdt_enc::cryptor::Cryptor for EncHandler {
     async fn decrypt(&self, key: VersionBytesRef<'_>, enc_data: &[u8]) -> Result<Vec<u8>> {
         key.ensure_version(KEY_VERSION)
             .context("not matching key version")?;
-        let key = secretbox::Key::from_slice(key.as_ref()).context("invalid key length")?;
-
+        if key.as_ref().len() != KEY_LEN {
+            return Err(Error::msg("Invalid key length"));
+        }
         let version_box: VersionBytesRef =
             rmp_serde::from_read_ref(enc_data).context("failed to parse version box")?;
         version_box
             .ensure_version(DATA_VERSION)
             .context("not matching version of encryption box")?;
-
         let enc_box: EncBox = rmp_serde::from_read_ref(version_box.as_ref())
             .context("failed to parse encryption box")?;
-        let clear_text = secretbox::open(&enc_box.enc_data, &enc_box.nonce, &key)
-            .map_err(|_| Error::msg("failed decrypting data"))?;
+        if enc_box.nonce.as_ref().len() != NONCE_LEN {
+            return Err(Error::msg("Invalid nonce length"));
+        }
+        let key = Key::from_slice(key.as_ref());
+        let aead = XChaCha20Poly1305::new(key);
+        let xnonce = XNonce::from_slice(&enc_box.nonce);
+        let clear_text = aead
+            .decrypt(&xnonce, enc_box.enc_data.as_ref())
+            .context("Decryption failed")?;
         Ok(clear_text)
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct EncBox<'a> {
-    nonce: secretbox::Nonce,
+    #[serde(borrow)]
+    #[serde(with = "serde_bytes")]
+    nonce: Cow<'a, [u8]>,
 
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
