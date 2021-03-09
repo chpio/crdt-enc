@@ -13,6 +13,7 @@ rmp-serde = "0.15"
 serde_bytes = "0.11"
 uuid = "0.8"
 async-trait = "0.1"
+agnostik = {git = "https://github.com/chpio/agnostik.git", branch = "tokio1"}
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"

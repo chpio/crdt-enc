@@ -355,7 +355,7 @@ where
             Ok((clear_text, states_to_remove, ops_to_remove, key))
         })?;
 
-        let data_enc = self.cryptor.encrypt(key.key(), &clear_text).await.unwrap();
+        let data_enc = self.cryptor.encrypt(key.key(), clear_text).await.unwrap();
 
         let enc_data = VersionBytes::new(self.current_data_version, data_enc);
 
@@ -436,7 +436,7 @@ where
 
                     let clear_text = self
                         .cryptor
-                        .decrypt(key.key(), state.as_ref())
+                        .decrypt(key.key(), state.into_inner())
                         .await
                         .with_context(|| format!("failed decrypting remote state {}", name))?;
 
@@ -500,7 +500,7 @@ where
                     data.ensure_versions(SUPPORTED_VERSIONS)?;
                     let clear_text = self
                         .cryptor
-                        .decrypt(key.key(), data.as_ref())
+                        .decrypt(key.key(), data.into_inner())
                         .await
                         .unwrap();
 
@@ -684,7 +684,7 @@ where
 
         let data_enc = self
             .cryptor
-            .encrypt(key.key(), &clear_text.serialize())
+            .encrypt(key.key(), clear_text.serialize())
             .await
             .unwrap();
 

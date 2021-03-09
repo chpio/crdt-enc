@@ -22,6 +22,6 @@ where
     }
 
     async fn gen_key(&self) -> Result<VersionBytes>;
-    async fn encrypt(&self, key: VersionBytesRef<'_>, clear_text: &[u8]) -> Result<Vec<u8>>;
-    async fn decrypt(&self, key: VersionBytesRef<'_>, enc_data: &[u8]) -> Result<Vec<u8>>;
+    async fn encrypt(&self, key: VersionBytesRef<'_>, clear_text: Vec<u8>) -> Result<Vec<u8>>;
+    async fn decrypt(&self, key: VersionBytesRef<'_>, enc_data: Vec<u8>) -> Result<Vec<u8>>;
 }

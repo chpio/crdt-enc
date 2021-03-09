@@ -1,3 +1,4 @@
+use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
 use ::chacha20poly1305::{
@@ -29,64 +30,77 @@ impl EncHandler {
 #[async_trait]
 impl crdt_enc::cryptor::Cryptor for EncHandler {
     async fn gen_key(&self) -> Result<VersionBytes> {
-        let mut key = [0u8; KEY_LEN];
-        thread_rng()
-            .try_fill_bytes(&mut key)
-            .context("Unable to get random data for secret key")?;
-        Ok(VersionBytes::new(KEY_VERSION, key.into()))
+        spawn_blocking(|| {
+            let mut key = [0u8; KEY_LEN];
+            thread_rng()
+                .try_fill_bytes(&mut key)
+                .context("Unable to get random data for secret key")?;
+            Ok(VersionBytes::new(KEY_VERSION, key.into()))
+        })
+        .await
     }
 
-    async fn encrypt(&self, key: VersionBytesRef<'_>, clear_text: &[u8]) -> Result<Vec<u8>> {
+    async fn encrypt(&self, key: VersionBytesRef<'_>, clear_text: Vec<u8>) -> Result<Vec<u8>> {
         key.ensure_version(KEY_VERSION)
             .context("not matching key version")?;
         if key.as_ref().len() != KEY_LEN {
             return Err(Error::msg("Invalid key length"));
         }
-        let key = Key::from_slice(key.as_ref());
-        let aead = XChaCha20Poly1305::new(key);
-        let mut nonce = [0u8; NONCE_LEN];
-        thread_rng()
-            .try_fill_bytes(&mut nonce)
-            .context("Unable to get random data for nonce")?;
-        let xnonce = XNonce::from_slice(&nonce);
-        let enc_data = aead
-            .encrypt(xnonce, clear_text)
-            .context("Encryption failed")?;
-        let enc_box = EncBox {
-            nonce: Cow::Borrowed(nonce.as_ref()),
-            enc_data: Cow::Owned(enc_data),
-        };
-        let enc_box_bytes =
-            rmp_serde::to_vec_named(&enc_box).context("failed to encode encryption box")?;
-        let version_box = VersionBytesRef::new(DATA_VERSION, enc_box_bytes.as_ref());
-        let version_box_bytes =
-            rmp_serde::to_vec_named(&version_box).context("failed to encode version box")?;
-        Ok(version_box_bytes)
+        let key = key.as_ref().to_vec();
+
+        spawn_blocking(move || {
+            let key = Key::from_slice(&key);
+            let aead = XChaCha20Poly1305::new(key);
+            let mut nonce = [0u8; NONCE_LEN];
+            thread_rng()
+                .try_fill_bytes(&mut nonce)
+                .context("Unable to get random data for nonce")?;
+            let xnonce = XNonce::from_slice(&nonce);
+            let enc_data = aead
+                .encrypt(xnonce, clear_text.as_ref())
+                .context("Encryption failed")?;
+            let enc_box = EncBox {
+                nonce: Cow::Borrowed(nonce.as_ref()),
+                enc_data: Cow::Owned(enc_data),
+            };
+            let enc_box_bytes =
+                rmp_serde::to_vec_named(&enc_box).context("failed to encode encryption box")?;
+            let version_box = VersionBytesRef::new(DATA_VERSION, enc_box_bytes.as_ref());
+            let version_box_bytes =
+                rmp_serde::to_vec_named(&version_box).context("failed to encode version box")?;
+            Ok(version_box_bytes)
+        })
+        .await
     }
 
-    async fn decrypt(&self, key: VersionBytesRef<'_>, enc_data: &[u8]) -> Result<Vec<u8>> {
+    async fn decrypt(&self, key: VersionBytesRef<'_>, enc_data: Vec<u8>) -> Result<Vec<u8>> {
         key.ensure_version(KEY_VERSION)
             .context("not matching key version")?;
         if key.as_ref().len() != KEY_LEN {
             return Err(Error::msg("Invalid key length"));
         }
-        let version_box: VersionBytesRef =
-            rmp_serde::from_read_ref(enc_data).context("failed to parse version box")?;
-        version_box
-            .ensure_version(DATA_VERSION)
-            .context("not matching version of encryption box")?;
-        let enc_box: EncBox = rmp_serde::from_read_ref(version_box.as_ref())
-            .context("failed to parse encryption box")?;
-        if enc_box.nonce.as_ref().len() != NONCE_LEN {
-            return Err(Error::msg("Invalid nonce length"));
-        }
-        let key = Key::from_slice(key.as_ref());
-        let aead = XChaCha20Poly1305::new(key);
-        let xnonce = XNonce::from_slice(&enc_box.nonce);
-        let clear_text = aead
-            .decrypt(&xnonce, enc_box.enc_data.as_ref())
-            .context("Decryption failed")?;
-        Ok(clear_text)
+        let key = key.as_ref().to_vec();
+
+        spawn_blocking(move || {
+            let version_box: VersionBytesRef =
+                rmp_serde::from_read_ref(&enc_data).context("failed to parse version box")?;
+            version_box
+                .ensure_version(DATA_VERSION)
+                .context("not matching version of encryption box")?;
+            let enc_box: EncBox = rmp_serde::from_read_ref(version_box.as_ref())
+                .context("failed to parse encryption box")?;
+            if enc_box.nonce.as_ref().len() != NONCE_LEN {
+                return Err(Error::msg("Invalid nonce length"));
+            }
+            let key = Key::from_slice(key.as_ref());
+            let aead = XChaCha20Poly1305::new(key);
+            let xnonce = XNonce::from_slice(&enc_box.nonce);
+            let clear_text = aead
+                .decrypt(&xnonce, enc_box.enc_data.as_ref())
+                .context("Decryption failed")?;
+            Ok(clear_text)
+        })
+        .await
     }
 }
 
