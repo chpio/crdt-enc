@@ -2,24 +2,11 @@ use ::anyhow::Result;
 use ::crdt_enc_gpgme::KeyHandler;
 use ::crdt_enc_tokio::Storage;
 use ::crdt_enc_xchacha20poly1305::EncHandler;
-use ::futures::task;
 use ::uuid::Uuid;
 
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0xaadfd5a6_6e19_4b24_a802_4fa27c72f20c);
 
 const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
-#[derive(Debug)]
-struct TokioSpawn;
-
-impl crdt_enc::CoreSpawn for TokioSpawn {}
-
-impl task::Spawn for TokioSpawn {
-    fn spawn_obj(&self, future: task::FutureObj<'static, ()>) -> Result<(), task::SpawnError> {
-        // drop tokios `JoinHandle`
-        tokio::spawn(future);
-        Ok(())
-    }
-}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
@@ -29,7 +16,6 @@ async fn main() -> Result<()> {
     let cryptor = EncHandler::new();
     let key_cryptor = KeyHandler::new();
     let open_options = crdt_enc::OpenOptions {
-        spawn: Box::new(TokioSpawn),
         storage,
         cryptor,
         key_cryptor,
