@@ -126,7 +126,9 @@ where
     Ok(())
 }
 
-/// Prevents `await`s while the lock is held. Awaiting could cause deadlocking.
+/// Uses sync `std::sync::Mutex` because it has less overhead than async mutex. Its intended use is
+/// for short data accesses. Prevents `await`s while the lock is held. Awaiting could cause
+/// deadlocking.
 #[derive(Debug)]
 pub struct LockBox<T> {
     inner: SyncMutex<T>,

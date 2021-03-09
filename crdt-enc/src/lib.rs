@@ -204,8 +204,6 @@ pub struct Core<S, ST, C, KC> {
     storage: ST,
     cryptor: C,
     key_cryptor: KC,
-    // use sync `std::sync::Mutex` here because it has less overhead than async mutex, we are
-    // holding it for a very shot time and do not `.await` while the lock is held.
     data: LockBox<CoreMutData<S>>,
     supported_data_versions: Vec<Uuid>,
     current_data_version: Uuid,
