@@ -49,6 +49,26 @@ impl VersionBytes {
         self.as_version_bytes_ref().ensure_versions(versions)
     }
 
+    /// ```
+    /// use ::crdt_enc::utils::VersionBytes;
+    /// use ::uuid::Uuid;
+    ///
+    /// static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
+    ///     0x_a57761b0_c4b4_48fc_aa81_485cb2e37862_u128,
+    /// };
+    ///
+    /// let vb = VersionBytes::new(
+    ///     Uuid::from_u128(0x_a57761b0_c4b4_48fc_aa81_485cb2e37862),
+    ///     Vec::new(),
+    /// );
+    /// vb.ensure_versions_phf(&SUPPORTED_VERSIONS).unwrap();
+    ///
+    /// let vb_wrong_version = VersionBytes::new(
+    ///     Uuid::from_u128(0x_0),
+    ///     Vec::new(),
+    /// );
+    /// vb_wrong_version.ensure_versions_phf(&SUPPORTED_VERSIONS).unwrap_err();
+    /// ```
     pub fn ensure_versions_phf(&self, versions: &phf::Set<u128>) -> Result<(), VersionError> {
         self.as_version_bytes_ref().ensure_versions_phf(versions)
     }
@@ -132,6 +152,26 @@ impl<'a> VersionBytesRef<'a> {
         }
     }
 
+    /// ```
+    /// use ::crdt_enc::utils::VersionBytesRef;
+    /// use ::uuid::Uuid;
+    ///
+    /// static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
+    ///     0x_a57761b0_c4b4_48fc_aa81_485cb2e37862_u128,
+    /// };
+    ///
+    /// let vb = VersionBytesRef::new(
+    ///     Uuid::from_u128(0x_a57761b0_c4b4_48fc_aa81_485cb2e37862),
+    ///     &[],
+    /// );
+    /// vb.ensure_versions_phf(&SUPPORTED_VERSIONS).unwrap();
+    ///
+    /// let vb_wrong_version = VersionBytesRef::new(
+    ///     Uuid::from_u128(0x_0),
+    ///     &[],
+    /// );
+    /// vb_wrong_version.ensure_versions_phf(&SUPPORTED_VERSIONS).unwrap_err();
+    /// ```
     pub fn ensure_versions_phf(&self, versions: &phf::Set<u128>) -> Result<(), VersionError> {
         if versions.contains(&self.version().as_u128()) {
             Ok(())
