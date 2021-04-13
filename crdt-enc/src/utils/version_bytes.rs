@@ -49,6 +49,10 @@ impl VersionBytes {
         self.as_version_bytes_ref().ensure_versions(versions)
     }
 
+    pub fn ensure_versions_phf(&self, versions: &phf::Set<u128>) -> Result<(), VersionError> {
+        self.as_version_bytes_ref().ensure_versions_phf(versions)
+    }
+
     pub fn into_inner(self) -> Vec<u8> {
         self.1
     }
@@ -125,6 +129,21 @@ impl<'a> VersionBytesRef<'a> {
             })
         } else {
             Ok(())
+        }
+    }
+
+    pub fn ensure_versions_phf(&self, versions: &phf::Set<u128>) -> Result<(), VersionError> {
+        if versions.contains(&self.version().as_u128()) {
+            Ok(())
+        } else {
+            Err(VersionError {
+                expected: versions
+                    .iter()
+                    .copied()
+                    .map(|v| Uuid::from_u128(v))
+                    .collect(),
+                got: self.0,
+            })
         }
     }
 

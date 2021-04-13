@@ -55,6 +55,7 @@ pub fn decode_version_bytes_mvreg<T: DeserializeOwned + CvRDT + Default>(
     })
 }
 
+/// `supported_versions` needs to be sorted
 pub async fn decode_version_bytes_mvreg_custom<T, M, Fut>(
     reg: &MVReg<VersionBytes, Uuid>,
     supported_versions: &[Uuid],
@@ -69,6 +70,40 @@ where
     let val = stream::iter(vals)
         .map(|vb| {
             vb.ensure_versions(supported_versions)?;
+            Ok(vb.into_inner())
+        })
+        .map_ok(|buf| {
+            buf_decode(buf).map(|res| res.context("Custom buffer decode function failed"))
+        })
+        .try_buffer_unordered(16)
+        .try_fold(T::default(), |mut acc, buf| async move {
+            let keys = rmp_serde::from_read_ref(&buf).context("Could not parse msgpack value")?;
+            acc.merge(keys);
+            Ok(acc)
+        })
+        .await
+        .context("Could not process mvreg value")?;
+    Ok(ReadCtx {
+        add_clock: read_ctx.add_clock,
+        rm_clock: read_ctx.rm_clock,
+        val,
+    })
+}
+
+pub async fn decode_version_bytes_mvreg_custom_phf<T, M, Fut>(
+    reg: &MVReg<VersionBytes, Uuid>,
+    supported_versions: &phf::Set<u128>,
+    mut buf_decode: M,
+) -> Result<ReadCtx<T, Uuid>>
+where
+    T: DeserializeOwned + CvRDT + Default,
+    M: FnMut(Vec<u8>) -> Fut,
+    Fut: Future<Output = Result<Vec<u8>>>,
+{
+    let (vals, read_ctx) = reg.read().split();
+    let val = stream::iter(vals)
+        .map(|vb| {
+            vb.ensure_versions_phf(supported_versions)?;
             Ok(vb.into_inner())
         })
         .map_ok(|buf| {

@@ -3,7 +3,8 @@ use ::async_trait::async_trait;
 use ::crdt_enc::{
     key_cryptor::Keys,
     utils::{
-        decode_version_bytes_mvreg_custom, encode_version_bytes_mvreg_custom, LockBox, VersionBytes,
+        decode_version_bytes_mvreg_custom_phf, encode_version_bytes_mvreg_custom, LockBox,
+        VersionBytes,
     },
     CoreSubHandle, Info,
 };
@@ -14,10 +15,10 @@ use ::uuid::Uuid;
 
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0xe69cb68e_7fbb_41aa_8d22_87eace7a04c9);
 
-// needs to be sorted!
-const SUPPORTED_VERSIONS: &[Uuid] = &[
-    Uuid::from_u128(0xe69cb68e_7fbb_41aa_8d22_87eace7a04c9), // current
-];
+static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
+    // current
+    0x_e69cb68e_7fbb_41aa_8d22_87eace7a04c9_u128,
+};
 
 pub fn init() {
     gpgme::init();
@@ -88,12 +89,15 @@ impl crdt_enc::key_cryptor::KeyCryptor for KeyHandler {
             Ok((data.remote_meta.clone(), core))
         })?;
 
-        let keys_ctx =
-            decode_version_bytes_mvreg_custom(&remote_meta, SUPPORTED_VERSIONS, |buf| async move {
+        let keys_ctx = decode_version_bytes_mvreg_custom_phf(
+            &remote_meta,
+            &SUPPORTED_VERSIONS,
+            |buf| async move {
                 // TODO: decrypt key
                 Ok(buf)
-            })
-            .await?;
+            },
+        )
+        .await?;
 
         core.set_keys(keys_ctx).await?;
 
