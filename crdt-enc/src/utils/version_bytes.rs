@@ -285,8 +285,6 @@ impl<'a> Buf for VersionBytesBuf<'a> {
     }
 
     fn chunks_vectored<'b>(&'b self, dst: &mut [IoSlice<'b>]) -> usize {
-        // TODO: TESTING!
-
         if dst.len() == 0 {
             return 0;
         }
@@ -302,7 +300,7 @@ impl<'a> Buf for VersionBytesBuf<'a> {
             }
         } else {
             let pos = self.pos - VERSION_LEN;
-            if self.content.len() <= pos {
+            if self.content.len() == pos {
                 0
             } else {
                 dst[0] = IoSlice::new(&self.content[pos..]);
