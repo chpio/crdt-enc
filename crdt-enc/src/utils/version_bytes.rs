@@ -85,7 +85,7 @@ impl VersionBytes {
         VersionBytesBuf::new(self.0, &self.1)
     }
 
-    pub fn deserialize(slice: &[u8]) -> Result<VersionBytes, ParseError> {
+    pub fn deserialize(slice: &[u8]) -> Result<VersionBytes, DeserializeError> {
         Ok(VersionBytesRef::deserialize(slice)?.into())
     }
 
@@ -191,9 +191,9 @@ impl<'a> VersionBytesRef<'a> {
         VersionBytesBuf::new(self.0, &self.1)
     }
 
-    pub fn deserialize(slice: &'a [u8]) -> Result<VersionBytesRef<'a>, ParseError> {
+    pub fn deserialize(slice: &'a [u8]) -> Result<VersionBytesRef<'a>, DeserializeError> {
         if slice.len() < VERSION_LEN {
-            return Err(ParseError::InvalidLength);
+            return Err(DeserializeError::InvalidLength);
         }
 
         let mut version = [0; 16];
@@ -230,17 +230,17 @@ impl<'a> From<&'a VersionBytes> for VersionBytesRef<'a> {
 
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum ParseError {
+pub enum DeserializeError {
     InvalidLength,
 }
 
-impl fmt::Display for ParseError {
+impl fmt::Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         "invalid length".fmt(f)
     }
 }
 
-impl std::error::Error for ParseError {}
+impl std::error::Error for DeserializeError {}
 
 const VERSION_LEN: usize = 16;
 
