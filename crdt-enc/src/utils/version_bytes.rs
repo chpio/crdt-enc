@@ -78,11 +78,11 @@ impl VersionBytes {
     }
 
     pub fn as_version_bytes_ref(&self) -> VersionBytesRef<'_> {
-        VersionBytesRef::new(self.0, &self.1)
+        VersionBytesRef::new(self.version(), self.as_ref())
     }
 
     pub fn buf(&self) -> VersionBytesBuf<'_> {
-        VersionBytesBuf::new(self.0, &self.1)
+        VersionBytesBuf::new(self.version(), self.as_ref())
     }
 
     pub fn deserialize(slice: &[u8]) -> Result<VersionBytes, DeserializeError> {
@@ -102,7 +102,7 @@ impl From<VersionBytes> for Vec<u8> {
 
 impl From<VersionBytesRef<'_>> for VersionBytes {
     fn from(v: VersionBytesRef<'_>) -> VersionBytes {
-        VersionBytes::new(v.0, v.1.into())
+        VersionBytes::new(v.version(), v.into())
     }
 }
 
@@ -130,10 +130,10 @@ impl<'a> VersionBytesRef<'a> {
     }
 
     pub fn ensure_version(&self, version: Uuid) -> Result<(), VersionError> {
-        if self.0 != version {
+        if self.version() != version {
             Err(VersionError {
                 expected: vec![version],
-                got: self.0,
+                got: self.version(),
             })
         } else {
             Ok(())
@@ -142,10 +142,10 @@ impl<'a> VersionBytesRef<'a> {
 
     /// `versions` needs to be sorted!
     pub fn ensure_versions(&self, versions: &[Uuid]) -> Result<(), VersionError> {
-        if versions.binary_search(&self.0).is_err() {
+        if versions.binary_search(&self.version()).is_err() {
             Err(VersionError {
                 expected: versions.to_owned(),
-                got: self.0,
+                got: self.version(),
             })
         } else {
             Ok(())
@@ -182,13 +182,13 @@ impl<'a> VersionBytesRef<'a> {
                     .copied()
                     .map(|v| Uuid::from_u128(v))
                     .collect(),
-                got: self.0,
+                got: self.version(),
             })
         }
     }
 
     pub fn buf(&self) -> VersionBytesBuf<'_> {
-        VersionBytesBuf::new(self.0, &self.1)
+        VersionBytesBuf::new(self.version(), self.as_ref())
     }
 
     pub fn deserialize(slice: &'a [u8]) -> Result<VersionBytesRef<'a>, DeserializeError> {
@@ -196,8 +196,8 @@ impl<'a> VersionBytesRef<'a> {
             return Err(DeserializeError::InvalidLength);
         }
 
-        let mut version = [0; 16];
-        version.copy_from_slice(&slice[0..16]);
+        let mut version = [0; VERSION_LEN];
+        version.copy_from_slice(&slice[0..VERSION_LEN]);
         let version = Uuid::from_bytes(version);
 
         Ok(VersionBytesRef::new(version, &slice[VERSION_LEN..]))
@@ -216,15 +216,21 @@ impl<'a> VersionBytesRef<'a> {
     }
 }
 
-impl<'a> AsRef<[u8]> for VersionBytesRef<'a> {
-    fn as_ref(&self) -> &[u8] {
-        self.1.as_ref()
+impl<'a> From<VersionBytesRef<'a>> for Vec<u8> {
+    fn from(v: VersionBytesRef<'a>) -> Vec<u8> {
+        v.1.into()
     }
 }
 
 impl<'a> From<&'a VersionBytes> for VersionBytesRef<'a> {
     fn from(v: &'a VersionBytes) -> VersionBytesRef<'a> {
-        VersionBytesRef::new(v.0, &v.1)
+        VersionBytesRef::new(v.version(), v.as_ref())
+    }
+}
+
+impl<'a> AsRef<[u8]> for VersionBytesRef<'a> {
+    fn as_ref(&self) -> &[u8] {
+        self.1.as_ref()
     }
 }
 
