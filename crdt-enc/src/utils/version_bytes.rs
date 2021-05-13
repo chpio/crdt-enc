@@ -73,10 +73,6 @@ impl VersionBytes {
         self.as_version_bytes_ref().ensure_versions_phf(versions)
     }
 
-    pub fn into_inner(self) -> Vec<u8> {
-        self.1
-    }
-
     pub fn as_version_bytes_ref(&self) -> VersionBytesRef<'_> {
         VersionBytesRef::new(self.version(), self.as_ref())
     }

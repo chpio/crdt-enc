@@ -436,7 +436,7 @@ where
 
                     let clear_text = self
                         .cryptor
-                        .decrypt(key.key(), state.into_inner())
+                        .decrypt(key.key(), state.into())
                         .await
                         .with_context(|| format!("failed decrypting remote state {}", name))?;
 
@@ -500,7 +500,7 @@ where
                     data.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
                     let clear_text = self
                         .cryptor
-                        .decrypt(key.key(), data.into_inner())
+                        .decrypt(key.key(), data.into())
                         .await
                         .unwrap();
 

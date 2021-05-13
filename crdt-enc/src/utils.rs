@@ -70,7 +70,7 @@ where
     let val = stream::iter(vals)
         .map(|vb| {
             vb.ensure_versions(supported_versions)?;
-            Ok(vb.into_inner())
+            Ok(vb.into())
         })
         .map_ok(|buf| {
             buf_decode(buf).map(|res| res.context("Custom buffer decode function failed"))
@@ -104,7 +104,7 @@ where
     let val = stream::iter(vals)
         .map(|vb| {
             vb.ensure_versions_phf(supported_versions)?;
-            Ok(vb.into_inner())
+            Ok(vb.into())
         })
         .map_ok(|buf| {
             buf_decode(buf).map(|res| res.context("Custom buffer decode function failed"))
