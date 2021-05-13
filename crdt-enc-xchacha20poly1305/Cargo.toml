@@ -19,5 +19,5 @@ agnostik = "0.2"
 path = "../crdt-enc"
 
 [dependencies.chacha20poly1305]
-version = "0.7"
+version = "0.8"
 features = ["std"]
