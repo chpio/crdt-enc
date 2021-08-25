@@ -11,10 +11,10 @@ rmp-serde = "0.15"
 async-trait = "0.1"
 anyhow = "1"
 uuid = "0.8"
-crdts = "6.2"
-gpgme = "0.9"
+crdts = "7"
+gpgme = "0.10"
 dyn-clone = "1"
-phf = {version = "0.8", features = ["macros"]}
+phf = {version = "0.10", features = ["macros"]}
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"

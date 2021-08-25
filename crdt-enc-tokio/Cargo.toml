@@ -5,7 +5,7 @@ authors = ["Thomas Heck <t@b128.net>"]
 edition = "2018"
 
 [dependencies]
-crdts = "6.2"
+crdts = "7"
 serde = "1"
 async-trait = "=0.1.42" # https://github.com/dtolnay/async-trait/issues/144
 futures = "0.3"

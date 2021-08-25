@@ -5,7 +5,7 @@ authors = ["Thomas Heck <t@b128.net>"]
 edition = "2018"
 
 [dependencies]
-crdts = "6.2"
+crdts = "7"
 serde = "1"
 serde_bytes = "0.11"
 rmp-serde = "0.15"
@@ -15,7 +15,7 @@ thiserror = "1"
 futures = "0.3"
 dyn-clone = "1"
 bytes = "1"
-phf = {version = "0.8", features = ["macros"]}
+phf = {version = "0.10", features = ["macros"]}
 
 [dependencies.uuid]
 version = "0.8"
