@@ -10,7 +10,7 @@ serde = "1"
 async-trait = "=0.1.42" # https://github.com/dtolnay/async-trait/issues/144
 futures = "0.3"
 anyhow = "1"
-uuid = "0.8"
+uuid = "1"
 data-encoding = "2"
 bytes = "1"
 

@@ -7,14 +7,14 @@ edition = "2018"
 [dependencies]
 serde = "1"
 serde_bytes = "0.11"
-rmp-serde = "0.15"
+rmp-serde = "1"
 async-trait = "0.1"
 anyhow = "1"
-uuid = "0.8"
+uuid = "1"
 crdts = "7"
-gpgme = "0.10"
+gpgme = "0.11"
 dyn-clone = "1"
-phf = {version = "0.10", features = ["macros"]}
+phf = {version = "0.11", features = ["macros"]}
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"

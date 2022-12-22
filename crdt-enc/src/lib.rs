@@ -255,7 +255,7 @@ where
         let local_meta: LocalMeta = match local_meta {
             Some(local_meta) => {
                 local_meta.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
-                rmp_serde::from_read_ref(&local_meta)?
+                rmp_serde::from_slice(local_meta.as_ref())?
             }
             None => {
                 if !options.create {
@@ -443,7 +443,8 @@ where
                     let clear_text = VersionBytesRef::deserialize(&clear_text)?;
                     clear_text.ensure_versions(&self.supported_data_versions)?;
 
-                    let state_wrapper: StateWrapper<S> = rmp_serde::from_read_ref(&clear_text)?;
+                    let state_wrapper: StateWrapper<S> =
+                        rmp_serde::from_slice(clear_text.as_ref())?;
 
                     Result::<_>::Ok((name, state_wrapper))
                 }
@@ -498,16 +499,12 @@ where
                 let key = key.clone();
                 async move {
                     data.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
-                    let clear_text = self
-                        .cryptor
-                        .decrypt(key.key(), data.into())
-                        .await
-                        .unwrap();
+                    let clear_text = self.cryptor.decrypt(key.key(), data.into()).await.unwrap();
 
                     let clear_text = VersionBytesRef::deserialize(&clear_text)?;
                     clear_text.ensure_versions(&self.supported_data_versions)?;
 
-                    let ops: Vec<_> = rmp_serde::from_read_ref(&clear_text)?;
+                    let ops: Vec<_> = rmp_serde::from_slice(clear_text.as_ref())?;
 
                     Result::<_, Error>::Ok((actor, version, ops))
                 }
@@ -577,7 +574,7 @@ where
             .map(|(name, vbox)| {
                 vbox.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
 
-                let remote_meta: RemoteMeta = rmp_serde::from_read_ref(&vbox)?;
+                let remote_meta: RemoteMeta = rmp_serde::from_slice(vbox.as_ref())?;
 
                 Ok((name, remote_meta))
             })

@@ -43,7 +43,8 @@ pub fn decode_version_bytes_mvreg<T: DeserializeOwned + CvRDT + Default>(
         .into_iter()
         .try_fold(T::default(), |mut acc, vb| -> Result<T> {
             vb.ensure_versions(supported_versions)?;
-            let keys = rmp_serde::from_read_ref(&vb).context("Could not parse msgpack value")?;
+            let keys =
+                rmp_serde::from_slice(vb.as_ref()).context("Could not parse msgpack value")?;
             acc.merge(keys);
             Ok(acc)
         })
@@ -77,7 +78,7 @@ where
         })
         .try_buffer_unordered(16)
         .try_fold(T::default(), |mut acc, buf| async move {
-            let keys = rmp_serde::from_read_ref(&buf).context("Could not parse msgpack value")?;
+            let keys = rmp_serde::from_slice(&buf).context("Could not parse msgpack value")?;
             acc.merge(keys);
             Ok(acc)
         })
@@ -111,7 +112,7 @@ where
         })
         .try_buffer_unordered(16)
         .try_fold(T::default(), |mut acc, buf| async move {
-            let keys = rmp_serde::from_read_ref(&buf).context("Could not parse msgpack value")?;
+            let keys = rmp_serde::from_slice(&buf).context("Could not parse msgpack value")?;
             acc.merge(keys);
             Ok(acc)
         })

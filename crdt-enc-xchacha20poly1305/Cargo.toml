@@ -9,9 +9,9 @@ crdts = "7"
 rand = "0.8"
 anyhow = "1"
 serde = "1"
-rmp-serde = "0.15"
+rmp-serde = "1"
 serde_bytes = "0.11"
-uuid = "0.8"
+uuid = "1"
 async-trait = "0.1"
 agnostik = "0.2"
 
@@ -19,5 +19,5 @@ agnostik = "0.2"
 path = "../crdt-enc"
 
 [dependencies.chacha20poly1305]
-version = "0.8"
+version = "0.10"
 features = ["std"]

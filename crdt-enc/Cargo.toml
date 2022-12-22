@@ -8,15 +8,15 @@ edition = "2018"
 crdts = "7"
 serde = "1"
 serde_bytes = "0.11"
-rmp-serde = "0.15"
+rmp-serde = "1"
 async-trait = "0.1"
 anyhow = "1"
 thiserror = "1"
 futures = "0.3"
 dyn-clone = "1"
 bytes = "1"
-phf = {version = "0.10", features = ["macros"]}
+phf = {version = "0.11", features = ["macros"]}
 
 [dependencies.uuid]
-version = "0.8"
+version = "1"
 features = ["serde", "v4"]

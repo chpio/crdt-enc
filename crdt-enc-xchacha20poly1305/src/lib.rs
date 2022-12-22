@@ -1,10 +1,7 @@
 use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
-use ::chacha20poly1305::{
-    aead::{Aead, NewAead},
-    Key, XChaCha20Poly1305, XNonce,
-};
+use ::chacha20poly1305::{aead::Aead, Key, KeyInit, XChaCha20Poly1305, XNonce};
 use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
 use ::rand::{thread_rng, RngCore};
 use ::serde::{Deserialize, Serialize};
@@ -83,11 +80,11 @@ impl crdt_enc::cryptor::Cryptor for EncHandler {
 
         spawn_blocking(move || {
             let version_box: VersionBytesRef =
-                rmp_serde::from_read_ref(&enc_data).context("failed to parse version box")?;
+                rmp_serde::from_slice(&enc_data).context("failed to parse version box")?;
             version_box
                 .ensure_version(DATA_VERSION)
                 .context("not matching version of encryption box")?;
-            let enc_box: EncBox = rmp_serde::from_read_ref(version_box.as_ref())
+            let enc_box: EncBox = rmp_serde::from_slice(version_box.as_ref())
                 .context("failed to parse encryption box")?;
             if enc_box.nonce.as_ref().len() != NONCE_LEN {
                 return Err(Error::msg("Invalid nonce length"));

@@ -249,7 +249,7 @@ const VERSION_LEN: usize = 16;
 #[derive(Debug, Clone)]
 pub struct VersionBytesBuf<'a> {
     pos: usize,
-    version: [u8; VERSION_LEN],
+    version: uuid::Bytes,
     content: &'a [u8],
 }
 
