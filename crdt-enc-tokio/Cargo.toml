@@ -2,7 +2,7 @@
 name = "crdt-enc-tokio"
 version = "0.1.0"
 authors = ["Thomas Heck <t@b128.net>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 crdts = "7"
