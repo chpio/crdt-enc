@@ -173,11 +173,7 @@ impl<'a> VersionBytesRef<'a> {
             Ok(())
         } else {
             Err(VersionError {
-                expected: versions
-                    .iter()
-                    .copied()
-                    .map(|v| Uuid::from_u128(v))
-                    .collect(),
+                expected: versions.iter().copied().map(Uuid::from_u128).collect(),
                 got: self.version(),
             })
         }
