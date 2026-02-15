@@ -2,7 +2,7 @@
 name = "crdt-enc"
 version = "0.1.0"
 authors = ["Thomas Heck <t@b128.net>"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 crdts = "7"

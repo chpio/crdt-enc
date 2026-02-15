@@ -11,13 +11,13 @@ use crate::{
 };
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
-use ::crdts::{ctx::ReadCtx, CmRDT, CvRDT, MVReg, VClock};
+use ::crdts::{CmRDT, CvRDT, MVReg, VClock, ctx::ReadCtx};
 use ::dyn_clone::DynClone;
 use ::futures::{
     lock::Mutex as AsyncMutex,
     stream::{self, StreamExt, TryStreamExt},
 };
-use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
+use ::serde::{Deserialize, Serialize, de::DeserializeOwned};
 use ::std::{
     collections::HashSet, convert::Infallible, default::Default, fmt::Debug, mem, sync::Arc,
 };

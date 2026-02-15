@@ -1,4 +1,4 @@
-use ::anyhow::{ensure, Context, Error, Result};
+use ::anyhow::{Context, Error, Result, ensure};
 use ::async_trait::async_trait;
 use ::bytes::Buf;
 use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};

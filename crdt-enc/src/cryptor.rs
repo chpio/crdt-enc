@@ -1,6 +1,6 @@
 use crate::{
-    utils::{VersionBytes, VersionBytesRef},
     CoreSubHandle,
+    utils::{VersionBytes, VersionBytesRef},
 };
 use ::anyhow::Result;
 use ::async_trait::async_trait;

@@ -1,4 +1,4 @@
-use crate::{utils::VersionBytes, CoreSubHandle};
+use crate::{CoreSubHandle, utils::VersionBytes};
 use ::anyhow::Result;
 use ::async_trait::async_trait;
 use ::crdts::MVReg;

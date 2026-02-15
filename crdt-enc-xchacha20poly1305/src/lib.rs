@@ -1,9 +1,9 @@
 use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
-use ::chacha20poly1305::{aead::Aead, Key, KeyInit, XChaCha20Poly1305, XNonce};
+use ::chacha20poly1305::{Key, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
-use ::rand::{thread_rng, RngCore};
+use ::rand::{RngCore, thread_rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug};
 use ::uuid::Uuid;

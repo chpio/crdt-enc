@@ -3,9 +3,9 @@ mod version_bytes;
 pub use version_bytes::*;
 
 use ::anyhow::{Context, Result};
-use ::crdts::{ctx::ReadCtx, CmRDT, CvRDT, MVReg};
-use ::futures::{stream, Future, FutureExt, StreamExt, TryStreamExt};
-use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
+use ::crdts::{CmRDT, CvRDT, MVReg, ctx::ReadCtx};
+use ::futures::{Future, FutureExt, StreamExt, TryStreamExt, stream};
+use ::serde::{Deserialize, Serialize, de::DeserializeOwned};
 use ::std::{convert::Infallible, fmt::Debug, sync::Mutex as SyncMutex};
 use ::uuid::Uuid;
 
