@@ -14,7 +14,7 @@ uuid = "1"
 crdts = "7"
 gpgme = "0.11"
 dyn-clone = "1"
-phf = {version = "0.11", features = ["macros"]}
+phf = {version = "0.13", features = ["macros"]}
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"

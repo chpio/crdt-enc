@@ -3,7 +3,7 @@ use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
 use ::chacha20poly1305::{Key, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
-use ::rand::{RngCore, thread_rng};
+use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug};
 use ::uuid::Uuid;
@@ -29,7 +29,7 @@ impl crdt_enc::cryptor::Cryptor for EncHandler {
     async fn gen_key(&self) -> Result<VersionBytes> {
         spawn_blocking(|| {
             let mut key = [0u8; KEY_LEN];
-            thread_rng()
+            rng()
                 .try_fill_bytes(&mut key)
                 .context("Unable to get random data for secret key")?;
             Ok(VersionBytes::new(KEY_VERSION, key.into()))
@@ -49,7 +49,7 @@ impl crdt_enc::cryptor::Cryptor for EncHandler {
             let key = Key::from_slice(&key);
             let aead = XChaCha20Poly1305::new(key);
             let mut nonce = [0u8; NONCE_LEN];
-            thread_rng()
+            rng()
                 .try_fill_bytes(&mut nonce)
                 .context("Unable to get random data for nonce")?;
             let xnonce = XNonce::from_slice(&nonce);

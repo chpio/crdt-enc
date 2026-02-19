@@ -6,7 +6,7 @@ edition = "2024"
 
 [dependencies]
 crdts = "7"
-rand = "0.8"
+rand = { version = "0.10", features = ["thread_rng"] }
 anyhow = "1"
 serde = "1"
 rmp-serde = "1"

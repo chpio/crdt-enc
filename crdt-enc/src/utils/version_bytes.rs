@@ -253,7 +253,7 @@ impl<'a> VersionBytesBuf<'a> {
     pub fn new(version: Uuid, content: &'a [u8]) -> VersionBytesBuf<'a> {
         VersionBytesBuf {
             pos: 0,
-            version: *version.as_bytes(),
+            version: version.into_bytes(),
             content,
         }
     }
