@@ -1,7 +1,8 @@
 use ::anyhow::{Context, Error, Result, ensure};
 use ::async_trait::async_trait;
 use ::bytes::Buf;
-use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
+use ::crdt_enc::utils::{LockBox, VersionBytes, VersionBytesRef};
+use ::fs4::tokio::AsyncFileExt;
 use ::futures::{
     future::{Either, TryFutureExt},
     stream::{self, Stream, StreamExt, TryStreamExt},
@@ -23,6 +24,9 @@ use ::uuid::Uuid;
 pub struct Storage {
     local_path: PathBuf,
     remote_path: PathBuf,
+    /// `None` until `ensure_local_lock` acquires the process-exclusive lock on `local_path` (on
+    /// first local-meta access); released automatically when this file handle is dropped
+    local_lock: LockBox<Option<fs::File>>,
 }
 
 impl Storage {
@@ -41,13 +45,48 @@ impl Storage {
         Ok(Storage {
             local_path,
             remote_path,
+            local_lock: LockBox::new(None),
         })
+    }
+
+    /// Locks `local_path` for exclusive use by this process, failing if another process (e.g. this
+    /// same actor's local storage opened twice) already holds it. No-op if already locked.
+    async fn ensure_local_lock(&self) -> Result<()> {
+        if self.local_lock.with(|lock| lock.is_some()) {
+            return Ok(());
+        }
+
+        fs::create_dir_all(&self.local_path)
+            .await
+            .with_context(|| format!("failed creating local dir {}", self.local_path.display()))?;
+
+        let lock_path = self.local_path.join(".lock");
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .await
+            .with_context(|| format!("failed opening lock file {}", lock_path.display()))?;
+
+        lock_file.try_lock().with_context(|| {
+            format!(
+                "local storage at {} is already locked by another process \
+                 (is the same actor's local storage already open elsewhere?)",
+                self.local_path.display()
+            )
+        })?;
+
+        self.local_lock.with(|lock| *lock = Some(lock_file));
+
+        Ok(())
     }
 }
 
 #[async_trait]
 impl crdt_enc::storage::Storage for Storage {
     async fn load_local_meta(&self) -> Result<Option<VersionBytes>> {
+        self.ensure_local_lock().await?;
+
         let path = self.local_path.join("meta-data.msgpack");
         let bytes = read_file_optional(&path)
             .await
@@ -63,9 +102,7 @@ impl crdt_enc::storage::Storage for Storage {
     }
 
     async fn store_local_meta(&self, meta: VersionBytes) -> Result<()> {
-        fs::create_dir_all(&self.local_path)
-            .await
-            .with_context(|| format!("failed creating local dir {:?}", self.local_path))?;
+        self.ensure_local_lock().await?;
 
         let path = self.local_path.join("meta-data.msgpack");
         // TODO: catch concurrent writes, locking?

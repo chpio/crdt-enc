@@ -13,6 +13,7 @@ anyhow = "1"
 uuid = "1"
 data-encoding = "2"
 bytes = "1"
+fs4 = { version = "1.1.0", features = ["tokio"] }
 
 [dependencies.tiny-keccak]
 version = "2"
