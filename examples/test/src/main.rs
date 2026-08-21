@@ -42,16 +42,13 @@ async fn main() -> Result<()> {
 
     // dbg!(&repo);
 
-    let op = repo.with_state(|s: &crdts::MVReg<u64, Uuid>| {
+    repo.read_and_apply(|s: &crdts::MVReg<u64, Uuid>| {
         let read_ctx = s.read();
         let new_val = read_ctx.val.iter().copied().max().unwrap_or(0) + 1;
         let op = s.write(new_val, read_ctx.derive_add_ctx(info.actor()));
-        Ok(op)
-    })?;
-
-    dbg!(&op);
-
-    repo.apply_ops(vec![op]).await?;
+        Ok(vec![op])
+    })
+    .await?;
 
     Ok(())
 }

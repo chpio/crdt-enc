@@ -193,7 +193,10 @@ pub struct Core<S, ST, C, KC> {
     data: LockBox<CoreMutData<S>>,
     supported_data_versions: Vec<Uuid>,
     current_data_version: Uuid,
-    apply_ops_lock: AsyncMutex<()>,
+    /// Guards every section that reads-then-mutates `data.state` (local op application and remote
+    /// state/op merges), so a `read_and_apply` op is never built from a causal context that a
+    /// concurrent apply or remote merge invalidates before it lands.
+    state_lock: AsyncMutex<()>,
 }
 
 #[derive(Debug)]
@@ -244,7 +247,7 @@ where
                 read_states: HashSet::new(),
                 read_remote_metas: HashSet::new(),
             }),
-            apply_ops_lock: AsyncMutex::new(()),
+            state_lock: AsyncMutex::new(()),
         });
 
         let local_meta = core
@@ -327,6 +330,73 @@ where
         F: FnOnce(&S) -> Result<R>,
     {
         self.data.with(|data| f(&data.state.state))
+    }
+
+    /// Atomically reads the current state, builds ops from it via `f`, and applies them — unlike
+    /// separately reading via `with_state` and then applying, no local apply or remote merge can land
+    /// between the read and the apply, so `f` never builds an op from a causal context that's gone
+    /// stale by the time it's applied. To apply already-built ops without reading state, pass a
+    /// closure that ignores its argument, e.g. `read_and_apply(|_| Ok(ops))`.
+    pub async fn read_and_apply<F>(self: &Arc<Self>, f: F) -> Result<()>
+    where
+        F: FnOnce(&S) -> Result<Vec<S::Op>>,
+    {
+        let state_lock = self.state_lock.lock().await;
+
+        let ops = self.data.try_with(|data| f(&data.state.state))?;
+
+        let clear_text = rmp_serde::to_vec_named(&ops)?;
+        let clear_text = VersionBytes::new(self.current_data_version, clear_text);
+
+        let key = self.data.with(|data| {
+            data.keys
+                .as_ref()
+                .unwrap()
+                .val
+                .latest_key()
+                .context("no latest key")
+        })?;
+
+        let data_enc = self
+            .cryptor
+            .encrypt(key.key(), clear_text.serialize())
+            .await
+            .unwrap();
+
+        // TODO: add key id
+        // let block = Block {
+        //     data_version: self.current_data_version,
+        //     key_id: Uuid::nil(),
+        //     data_enc,
+        // };
+
+        let data_enc = VersionBytes::new(CURRENT_VERSION, data_enc);
+
+        let (actor, version) = self.data.try_with(|data| {
+            let actor = data
+                .local_meta
+                .as_ref()
+                .ok_or_else(|| Error::msg("local meta not loaded"))?
+                .local_actor_id;
+            let version = data.state.next_op_versions.get(&actor);
+            Ok((actor, version))
+        })?;
+
+        self.storage.store_ops(actor, version, data_enc).await?;
+
+        self.data.with(|data| {
+            for op in ops {
+                data.state.state.apply(op);
+            }
+
+            let version_inc = data.state.next_op_versions.inc(actor);
+            data.state.next_op_versions.apply(version_inc);
+        });
+
+        // release lock by hand to prevent an early release by accident
+        mem::drop(state_lock);
+
+        Ok(())
     }
 
     pub async fn compact(self: &Arc<Self>) -> Result<()> {
@@ -455,6 +525,8 @@ where
 
         let states_read = !new_states.is_empty();
 
+        let state_lock = self.state_lock.lock().await;
+
         self.data.with(|data| {
             for (name, state_wrapper) in new_states {
                 data.state.state.merge(state_wrapper.state);
@@ -464,6 +536,8 @@ where
                 data.read_states.insert(name);
             }
         });
+
+        mem::drop(state_lock);
 
         Ok(states_read)
     }
@@ -513,6 +587,8 @@ where
             .try_collect()
             .await?;
 
+        let state_lock = self.state_lock.lock().await;
+
         let ops_read = self.data.with(|data| {
             let mut ops_read = false;
             for (actor, version, ops) in new_ops {
@@ -542,6 +618,8 @@ where
 
             Ok(ops_read)
         })?;
+
+        mem::drop(state_lock);
 
         Ok(ops_read)
     }
@@ -659,64 +737,6 @@ where
         });
 
         self.storage.remove_remote_metas(names_to_remove).await?;
-
-        Ok(())
-    }
-
-    pub async fn apply_ops(self: &Arc<Self>, ops: Vec<S::Op>) -> Result<()> {
-        // don't allow concurrent op applies
-        let apply_ops_lock = self.apply_ops_lock.lock().await;
-
-        let clear_text = rmp_serde::to_vec_named(&ops)?;
-        let clear_text = VersionBytes::new(self.current_data_version, clear_text);
-
-        let key = self.data.with(|data| {
-            data.keys
-                .as_ref()
-                .unwrap()
-                .val
-                .latest_key()
-                .context("no latest key")
-        })?;
-
-        let data_enc = self
-            .cryptor
-            .encrypt(key.key(), clear_text.serialize())
-            .await
-            .unwrap();
-
-        // TODO: add key id
-        // let block = Block {
-        //     data_version: self.current_data_version,
-        //     key_id: Uuid::nil(),
-        //     data_enc,
-        // };
-
-        let data_enc = VersionBytes::new(CURRENT_VERSION, data_enc);
-
-        let (actor, version) = self.data.try_with(|data| {
-            let actor = data
-                .local_meta
-                .as_ref()
-                .ok_or_else(|| Error::msg("local meta not loaded"))?
-                .local_actor_id;
-            let version = data.state.next_op_versions.get(&actor);
-            Ok((actor, version))
-        })?;
-
-        self.storage.store_ops(actor, version, data_enc).await?;
-
-        self.data.with(|data| {
-            for op in ops {
-                data.state.state.apply(op);
-            }
-
-            let version_inc = data.state.next_op_versions.inc(actor);
-            data.state.next_op_versions.apply(version_inc);
-        });
-
-        // release lock by hand to prevent an early release by accident
-        mem::drop(apply_ops_lock);
 
         Ok(())
     }
