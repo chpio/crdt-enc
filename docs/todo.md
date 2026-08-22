@@ -6,11 +6,12 @@
 * crdt validation
 * filter filenames in storage-tokio
 * ensure concurrently deleted files (between storage::list and storage::load) do not crash core
-* zero-on-drop for the actual key material in crdt-enc-envelope::keys::Key/VersionBytes -- done for
-  PasswordKeySlot's password/derived keys (Zeroizing), not yet for the content-key bytes held in
-  the Keys CRDT itself
-  * https://docs.rs/sequoia-openpgp/1.1.0/sequoia_openpgp/crypto/mem/struct.Protected.html
-  * https://docs.rs/sequoia-openpgp/1.1.0/sequoia_openpgp/crypto/mem/struct.Encrypted.html
+* harden key material protection for the content-key bytes held in the Keys CRDT itself
+  (crdt-enc-envelope::keys::Key/VersionBytes) -- done for PasswordKeySlot's password/derived keys
+  (Zeroizing) already. Use https://crates.io/crates/secrets (mlock + guard pages + underflow
+  canary + zeroize-on-drop, ~7 transitive deps, no required system library) rather than
+  sequoia-openpgp's crypto::mem::Protected/Encrypted -- pulling in sequoia just for that is way
+  oversized (~490 transitive deps even with minimal features)
 * https://github.com/BurntSushi/quickcheck
 * ist agnostik noch aktuell/wird es noch geupdatet? Alternativen?
 * wird async_trait noch benötigt? sollte doch jetzt auch nativ gehen in rust
