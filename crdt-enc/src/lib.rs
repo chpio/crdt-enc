@@ -201,6 +201,13 @@ where
         })
     }
 
+    /// Gives access to the concrete `Protector` this `Core` was opened with, for
+    /// implementation-specific functionality (e.g. `EnvelopeProtector::rotate_key`) that isn't
+    /// part of the generic `Protector` trait Core itself relies on.
+    pub fn protector(self: &Arc<Self>) -> &P {
+        &self.protector
+    }
+
     /// Locks cores data, do not call recursivl
     pub fn with_state<F, R>(self: &Arc<Self>, f: F) -> Result<R>
     where

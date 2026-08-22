@@ -12,9 +12,10 @@ use ::crdt_enc::{
     },
 };
 use ::crdts::{CvRDT, MVReg, ctx::ReadCtx};
+use ::futures::lock::Mutex as AsyncMutex;
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
-use ::std::{borrow::Cow, fmt::Debug};
+use ::std::{borrow::Cow, fmt::Debug, mem};
 use ::uuid::Uuid;
 
 mod keys;
@@ -68,6 +69,11 @@ struct MutData {
 pub struct EnvelopeProtector<KS> {
     key_slot: KS,
     data: LockBox<MutData>,
+    /// Guards every "read current keys, add a new one, publish it" sequence (initial bootstrap
+    /// and, later, `rotate_key`), so two such sequences racing for the same actor can never
+    /// derive colliding CRDT dots (which would otherwise silently drop one of the two keys, or
+    /// worse, trigger the `panic!` in `Keys::latest_key`).
+    key_write_lock: AsyncMutex<()>,
 }
 
 impl<KS> EnvelopeProtector<KS> {
@@ -81,6 +87,7 @@ impl<KS> EnvelopeProtector<KS> {
                 remote_meta: MVReg::new(),
                 keys: Keys::default(),
             }),
+            key_write_lock: AsyncMutex::new(()),
         }
     }
 }
@@ -129,35 +136,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
         let need_new_key = self.data.with(|data| data.keys.latest_key().is_none());
 
         if need_new_key {
-            let actor = core.info().actor();
-
-            let mut key_bytes = vec![0u8; KEY_LEN];
-            rng()
-                .try_fill_bytes(&mut key_bytes)
-                .context("Unable to get random data for content key")?;
-            let new_key = Key::new(VersionBytes::new(KEY_VERSION, key_bytes));
-
-            let mut new_keys = self.data.with(|data| data.keys.clone());
-            new_keys.insert_latest_key(actor, new_key);
-
-            let mut remote_meta = remote_meta;
-            encode_version_bytes_mvreg_custom(
-                &mut remote_meta,
-                ReadCtx {
-                    add_clock: keys_ctx.add_clock,
-                    rm_clock: keys_ctx.rm_clock,
-                    val: new_keys,
-                },
-                actor,
-                CURRENT_VERSION,
-                |buf| async move { self.key_slot.wrap_key(&buf).await },
-            )
-            .await?;
-
-            // loop back through the standard decode/merge path so `data.keys` reflects the
-            // round-tripped (wrapped+unwrapped) value, then push the new envelope to core
-            self.set_remote_meta(Some(remote_meta.clone())).await?;
-            core.set_remote_meta_protector(remote_meta).await?;
+            self.publish_new_key(core, true).await?;
         }
 
         Ok(())
@@ -193,6 +172,91 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             .with_context(|| format!("no key with id {}", enc_box.key_id))?;
 
         decrypt_content(key.key(), enc_box).await
+    }
+}
+
+impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
+    /// Generates a fresh content key, protects it via `key_slot.wrap_key`, and publishes it as
+    /// the new latest key. Old keys are never removed from the `Keys` CRDT, so content encrypted
+    /// with them (tagged with their id, see `encrypt`) remains decryptable via `decrypt`'s
+    /// `Keys::get_key` lookup.
+    pub async fn rotate_key(&self) -> Result<()> {
+        let core = self.data.try_with(|data| {
+            Ok(dyn_clone::clone_box(
+                &**data.core.as_ref().context("core is none")?,
+            ))
+        })?;
+
+        self.publish_new_key(core, false).await
+    }
+
+    /// Shared implementation behind the initial key bootstrap (`set_remote_meta`, with
+    /// `only_if_missing: true`) and `rotate_key` (`only_if_missing: false`). Everything here runs
+    /// under `key_write_lock`, re-reading `data.remote_meta`/`data.keys` fresh after acquiring
+    /// it, so two concurrent calls (e.g. two overlapping `rotate_key`s) can never derive
+    /// colliding CRDT dots for the same actor.
+    async fn publish_new_key(
+        &self,
+        core: Box<dyn CoreSubHandle>,
+        only_if_missing: bool,
+    ) -> Result<()> {
+        let guard = self.key_write_lock.lock().await;
+
+        let actor = core.info().actor();
+        let remote_meta = self.data.with(|data| data.remote_meta.clone());
+        let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
+            &remote_meta,
+            &SUPPORTED_VERSIONS,
+            |buf| async move { self.key_slot.unwrap_key(&buf).await },
+        )
+        .await?;
+
+        self.data.with(|data| {
+            data.keys.merge(keys_ctx.val.clone());
+        });
+
+        let remote_meta_to_push =
+            if only_if_missing && self.data.with(|data| data.keys.latest_key().is_some()) {
+                // someone else already published a key while we were waiting for the lock
+                None
+            } else {
+                let mut key_bytes = vec![0u8; KEY_LEN];
+                rng()
+                    .try_fill_bytes(&mut key_bytes)
+                    .context("Unable to get random data for content key")?;
+                let new_key = Key::new(VersionBytes::new(KEY_VERSION, key_bytes));
+
+                let mut new_keys = self.data.with(|data| data.keys.clone());
+                new_keys.insert_latest_key(actor, new_key);
+
+                let mut remote_meta = remote_meta;
+                encode_version_bytes_mvreg_custom(
+                    &mut remote_meta,
+                    ReadCtx {
+                        add_clock: keys_ctx.add_clock,
+                        rm_clock: keys_ctx.rm_clock,
+                        val: new_keys,
+                    },
+                    actor,
+                    CURRENT_VERSION,
+                    |buf| async move { self.key_slot.wrap_key(&buf).await },
+                )
+                .await?;
+
+                Some(remote_meta)
+            };
+
+        // release lock by hand to prevent an early release by accident
+        mem::drop(guard);
+
+        if let Some(remote_meta) = remote_meta_to_push {
+            // loop back through the standard decode/merge path so `data.keys` reflects the
+            // round-tripped (wrapped+unwrapped) value, then push the new envelope to core
+            self.set_remote_meta(Some(remote_meta.clone())).await?;
+            core.set_remote_meta_protector(remote_meta).await?;
+        }
+
+        Ok(())
     }
 }
 
