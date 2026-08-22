@@ -4,8 +4,8 @@ resolver = "2"
 
 members = [
     "crdt-enc",
+    "crdt-enc-envelope",
     "crdt-enc-gpgme",
-    "crdt-enc-xchacha20poly1305",
     "crdt-enc-tokio",
     "examples/*",
 ]

@@ -1,5 +1,5 @@
 [package]
-name = "crdt-enc-xchacha20poly1305"
+name = "crdt-enc-envelope"
 version = "0.1.0"
 authors = ["Thomas Heck <t@b128.net>"]
 edition = "2024"
@@ -13,7 +13,9 @@ rmp-serde = "1"
 serde_bytes = "0.11"
 uuid = "1"
 async-trait = "0.1"
+dyn-clone = "1"
 agnostik = "0.2"
+phf = { version = "0.13", features = ["macros"] }
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"
@@ -21,3 +23,12 @@ path = "../crdt-enc"
 [dependencies.chacha20poly1305]
 version = "0.10"
 features = ["std"]
+
+[dev-dependencies]
+crdt-enc-tokio = { path = "../crdt-enc-tokio" }
+tokio = { version = "1", features = ["macros", "rt"] }
+tempfile = "3"
+
+[dev-dependencies.agnostik]
+version = "0.2"
+features = ["runtime_tokio1"]

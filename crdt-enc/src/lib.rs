@@ -1,17 +1,15 @@
-pub mod cryptor;
-pub mod key_cryptor;
+pub mod protector;
 pub mod storage;
 pub mod utils;
 
 use crate::{
-    cryptor::Cryptor,
-    key_cryptor::{Key, KeyCryptor, Keys},
+    protector::Protector,
     storage::Storage,
     utils::{LockBox, VersionBytes, VersionBytesRef},
 };
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
-use ::crdts::{CmRDT, CvRDT, MVReg, VClock, ctx::ReadCtx};
+use ::crdts::{CmRDT, CvRDT, MVReg, VClock};
 use ::dyn_clone::DynClone;
 use ::futures::{
     lock::Mutex as AsyncMutex,
@@ -41,18 +39,13 @@ where
     async fn read_remote(&self) -> Result<()>;
     async fn read_remote_meta(&self) -> Result<()>;
 
-    async fn set_keys(&self, keys: ReadCtx<Keys, Uuid>) -> Result<()>;
-
     async fn set_remote_meta_storage(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
-    async fn set_remote_meta_cryptor(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
-    async fn set_remote_meta_key_cryptor(
-        &self,
-        remote_meta: MVReg<VersionBytes, Uuid>,
-    ) -> Result<()>;
+    async fn set_remote_meta_protector(&self, remote_meta: MVReg<VersionBytes, Uuid>)
+    -> Result<()>;
 }
 
 #[async_trait]
-impl<S, ST, C, KC> CoreSubHandle for Arc<Core<S, ST, C, KC>>
+impl<S, ST, P> CoreSubHandle for Arc<Core<S, ST, P>>
 where
     S: 'static
         + CmRDT
@@ -66,8 +59,7 @@ where
         + Sync,
     <S as CmRDT>::Op: 'static + Serialize + DeserializeOwned + Clone + Send,
     ST: Storage,
-    C: Cryptor,
-    KC: KeyCryptor,
+    P: Protector,
 {
     fn info(&self) -> Info {
         self.info()
@@ -85,111 +77,22 @@ where
         self.read_remote_meta().await
     }
 
-    async fn set_keys(&self, keys: ReadCtx<Keys, Uuid>) -> Result<()> {
-        self.set_keys(keys).await
-    }
-
     async fn set_remote_meta_storage(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()> {
         self.set_remote_meta_storage(remote_meta).await
     }
 
-    async fn set_remote_meta_cryptor(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()> {
-        self.set_remote_meta_cryptor(remote_meta).await
-    }
-
-    async fn set_remote_meta_key_cryptor(
+    async fn set_remote_meta_protector(
         &self,
         remote_meta: MVReg<VersionBytes, Uuid>,
     ) -> Result<()> {
-        self.set_remote_meta_key_cryptor(remote_meta).await
+        self.set_remote_meta_protector(remote_meta).await
     }
 }
 
-// #[async_trait]
-// pub trait CoreTrait
-// where
-//     Self: 'static + Debug + Send + Sync + Clone,
-//     <Self::State as CmRDT>::Op: 'static + Serialize + DeserializeOwned + Clone + Send,
-// {
-//     type State: 'static
-//         + CmRDT
-//         + CvRDT
-//         + Default
-//         + Serialize
-//         + DeserializeOwned
-//         + Clone
-//         + Debug
-//         + Send
-//         + Sync;
-
-//     async fn compact(&self) -> Result<()>;
-//     async fn read_remote(&self) -> Result<()>;
-//     async fn read_remote_meta(&self) -> Result<()>;
-//     async fn apply_ops(&self, ops: Vec<<Self::State as CmRDT>::Op>) -> Result<()>;
-
-//     async fn set_remote_meta_storage(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
-//     async fn set_remote_meta_cryptor(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
-//     async fn set_remote_meta_key_cryptor(&self, remote_meta: MVReg<VersionBytes, Uuid>)
-//         -> Result<()>;
-// }
-
-// #[async_trait]
-// impl<S, ST, C, KC> CoreTrait for Arc<Core<S, ST, C, KC>>
-// where
-//     S: 'static
-//         + CmRDT
-//         + CvRDT
-//         + Default
-//         + Serialize
-//         + DeserializeOwned
-//         + Clone
-//         + Debug
-//         + Send
-//         + Sync,
-//     <S as CmRDT>::Op: 'static + Serialize + DeserializeOwned + Clone + Send,
-//     ST: Storage<Self>,
-//     C: Cryptor<Self>,
-//     KC: KeyCryptor<Self>,
-// {
-//     type State = S;
-
-//     async fn compact(&self) -> Result<()> {
-//         self.compact_().await
-//     }
-
-//     async fn read_remote(&self) -> Result<()> {
-//         self.read_remote_().await
-//     }
-
-//     async fn read_remote_meta(&self) -> Result<()> {
-//         self.read_remote_meta_(false).await
-//     }
-
-//     async fn apply_ops(&self, ops: Vec<<Self::State as CmRDT>::Op>) -> Result<()> {
-//         self.apply_ops_(ops).await
-//     }
-
-//     async fn set_remote_meta_storage(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()> {
-//         self.set_remote_meta_storage_(remote_meta).await
-//     }
-
-//     async fn set_remote_meta_cryptor(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()> {
-//         self.set_remote_meta_cryptor_(remote_meta).await
-//     }
-
-//     async fn set_remote_meta_key_cryptor(
-//         &self,
-//         remote_meta: MVReg<VersionBytes, Uuid>,
-//     ) -> Result<()> {
-//         self.set_remote_meta_key_cryptor_(remote_meta).await
-//     }
-// }
-
 #[derive(Debug)]
-pub struct Core<S, ST, C, KC> {
+pub struct Core<S, ST, P> {
     storage: ST,
-    cryptor: C,
-    key_cryptor: KC,
+    protector: P,
     data: LockBox<CoreMutData<S>>,
     supported_data_versions: Vec<Uuid>,
     current_data_version: Uuid,
@@ -203,13 +106,12 @@ pub struct Core<S, ST, C, KC> {
 struct CoreMutData<S> {
     local_meta: Option<LocalMeta>,
     remote_meta: RemoteMeta,
-    keys: Option<ReadCtx<Keys, Uuid>>,
     state: StateWrapper<S>,
     read_states: HashSet<String>,
     read_remote_metas: HashSet<String>,
 }
 
-impl<S, ST, C, KC> Core<S, ST, C, KC>
+impl<S, ST, P> Core<S, ST, P>
 where
     S: 'static
         + CmRDT
@@ -223,23 +125,20 @@ where
         + Sync,
     <S as CmRDT>::Op: 'static + Serialize + DeserializeOwned + Clone + Send,
     ST: Storage,
-    C: Cryptor,
-    KC: KeyCryptor,
+    P: Protector,
 {
-    pub async fn open(options: OpenOptions<ST, C, KC>) -> Result<Arc<Self>> {
+    pub async fn open(options: OpenOptions<ST, P>) -> Result<Arc<Self>> {
         let mut supported_data_versions = options.supported_data_versions;
         supported_data_versions.sort_unstable();
 
         let core = Arc::new(Core {
             storage: options.storage,
-            cryptor: options.cryptor,
-            key_cryptor: options.key_cryptor,
+            protector: options.protector,
             supported_data_versions,
             current_data_version: options.current_data_version,
             data: LockBox::new(CoreMutData {
                 local_meta: None,
                 remote_meta: RemoteMeta::default(),
-                keys: None,
                 state: StateWrapper {
                     next_op_versions: Default::default(),
                     state: Default::default(),
@@ -280,35 +179,13 @@ where
             }
         };
 
-        let actor = local_meta.local_actor_id;
-
         core.data.with(|data| {
             data.local_meta = Some(local_meta);
         });
 
-        futures::try_join![
-            core.storage.init(&core),
-            core.cryptor.init(&core),
-            core.key_cryptor.init(&core),
-        ]?;
+        futures::try_join![core.storage.init(&core), core.protector.init(&core),]?;
 
         core.read_remote_meta_(true).await?;
-
-        let insert_new_key = core
-            .data
-            .with(|data| data.keys.as_ref().unwrap().val.latest_key().is_none());
-        if insert_new_key {
-            let new_key = core.cryptor.gen_key().await?;
-
-            let keys_ctx = core.data.with(|data| {
-                let mut keys_ctx = data.keys.take().unwrap();
-                keys_ctx.val.insert_latest_key(actor, Key::new(new_key));
-                keys_ctx
-            });
-
-            // give keys to kc, it gives us a new key ctx back
-            core.key_cryptor.set_keys(keys_ctx).await?;
-        }
 
         Ok(core)
     }
@@ -348,20 +225,7 @@ where
         let clear_text = rmp_serde::to_vec_named(&ops)?;
         let clear_text = VersionBytes::new(self.current_data_version, clear_text);
 
-        let key = self.data.with(|data| {
-            data.keys
-                .as_ref()
-                .unwrap()
-                .val
-                .latest_key()
-                .context("no latest key")
-        })?;
-
-        let data_enc = self
-            .cryptor
-            .encrypt(key.key(), clear_text.serialize())
-            .await
-            .unwrap();
+        let data_enc = self.protector.encrypt(clear_text.serialize()).await?;
 
         // TODO: add key id
         // let block = Block {
@@ -402,7 +266,7 @@ where
     pub async fn compact(self: &Arc<Self>) -> Result<()> {
         self.read_remote().await?;
 
-        let (clear_text, states_to_remove, ops_to_remove, key) = self.data.try_with(|data| {
+        let (clear_text, states_to_remove, ops_to_remove) = self.data.try_with(|data| {
             let clear_text = rmp_serde::to_vec_named(&data.state)?;
 
             let states_to_remove = data.read_states.iter().cloned().collect();
@@ -414,18 +278,10 @@ where
                 .map(|dot| (dot.actor.clone(), dot.counter - 1))
                 .collect();
 
-            let key = data
-                .keys
-                .as_ref()
-                .unwrap()
-                .val
-                .latest_key()
-                .context("no latest key")?;
-
-            Ok((clear_text, states_to_remove, ops_to_remove, key))
+            Ok((clear_text, states_to_remove, ops_to_remove))
         })?;
 
-        let data_enc = self.cryptor.encrypt(key.key(), clear_text).await.unwrap();
+        let data_enc = self.protector.encrypt(clear_text).await?;
 
         let enc_data = VersionBytes::new(self.current_data_version, data_enc);
 
@@ -449,14 +305,6 @@ where
         Ok(())
     }
 
-    async fn set_keys(self: &Arc<Self>, keys: ReadCtx<Keys, Uuid>) -> Result<()> {
-        self.data.with(|data| {
-            data.keys = Some(keys);
-        });
-
-        Ok(())
-    }
-
     pub async fn read_remote(self: &Arc<Self>) -> Result<()> {
         let states_read = self.read_remote_states().await?;
         let ops_read = self.read_remote_ops().await?;
@@ -475,22 +323,13 @@ where
             .await
             .context("failed getting state entry names while reading remote states")?;
 
-        let (states_to_read, key) = self.data.try_with(|data| {
+        let states_to_read = self.data.with(|data| {
             let states_to_read: Vec<_> = names
                 .into_iter()
                 .filter(|name| !data.read_states.contains(name))
                 .collect();
-
-            let key = data
-                .keys
-                .as_ref()
-                .unwrap()
-                .val
-                .latest_key()
-                .context("no latest key")?;
-
-            Ok((states_to_read, key))
-        })?;
+            states_to_read
+        });
 
         let new_states = self
             .storage
@@ -499,25 +338,21 @@ where
             .context("failed loading state content while reading remote states")?;
 
         let new_states: Vec<_> = stream::iter(new_states)
-            .map(|(name, state)| {
-                let key = key.clone();
-                async move {
-                    state.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
+            .map(|(name, state)| async move {
+                state.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
 
-                    let clear_text = self
-                        .cryptor
-                        .decrypt(key.key(), state.into())
-                        .await
-                        .with_context(|| format!("failed decrypting remote state {}", name))?;
+                let clear_text = self
+                    .protector
+                    .decrypt(state.into())
+                    .await
+                    .with_context(|| format!("failed decrypting remote state {}", name))?;
 
-                    let clear_text = VersionBytesRef::deserialize(&clear_text)?;
-                    clear_text.ensure_versions(&self.supported_data_versions)?;
+                let clear_text = VersionBytesRef::deserialize(&clear_text)?;
+                clear_text.ensure_versions(&self.supported_data_versions)?;
 
-                    let state_wrapper: StateWrapper<S> =
-                        rmp_serde::from_slice(clear_text.as_ref())?;
+                let state_wrapper: StateWrapper<S> = rmp_serde::from_slice(clear_text.as_ref())?;
 
-                    Result::<_>::Ok((name, state_wrapper))
-                }
+                Result::<_>::Ok((name, state_wrapper))
             })
             .buffer_unordered(16)
             .try_collect()
@@ -549,39 +384,27 @@ where
             .await
             .context("failed getting op actor entries while reading remote ops")?;
 
-        let (ops_to_read, key) = self.data.try_with(|data| {
+        let ops_to_read = self.data.with(|data| {
             let ops_to_read: Vec<_> = actors
                 .into_iter()
                 .map(|actor| (actor, data.state.next_op_versions.get(&actor)))
                 .collect();
-
-            let key = data
-                .keys
-                .as_ref()
-                .unwrap()
-                .val
-                .latest_key()
-                .context("no latest key")?;
-
-            Ok((ops_to_read, key))
-        })?;
+            ops_to_read
+        });
 
         let new_ops = self.storage.load_ops(ops_to_read).await?;
 
         let new_ops: Vec<_> = stream::iter(new_ops)
-            .map(|(actor, version, data)| {
-                let key = key.clone();
-                async move {
-                    data.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
-                    let clear_text = self.cryptor.decrypt(key.key(), data.into()).await.unwrap();
+            .map(|(actor, version, data)| async move {
+                data.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
+                let clear_text = self.protector.decrypt(data.into()).await?;
 
-                    let clear_text = VersionBytesRef::deserialize(&clear_text)?;
-                    clear_text.ensure_versions(&self.supported_data_versions)?;
+                let clear_text = VersionBytesRef::deserialize(&clear_text)?;
+                clear_text.ensure_versions(&self.supported_data_versions)?;
 
-                    let ops: Vec<_> = rmp_serde::from_slice(clear_text.as_ref())?;
+                let ops: Vec<_> = rmp_serde::from_slice(clear_text.as_ref())?;
 
-                    Result::<_, Error>::Ok((actor, version, ops))
-                }
+                Result::<_, Error>::Ok((actor, version, ops))
             })
             .buffered(16)
             .try_collect()
@@ -674,15 +497,12 @@ where
         if let Some(remote_meta) = remote_meta {
             futures::try_join![
                 self.storage.set_remote_meta(Some(remote_meta.storage)),
-                self.cryptor.set_remote_meta(Some(remote_meta.cryptor)),
-                self.key_cryptor
-                    .set_remote_meta(Some(remote_meta.key_cryptor)),
+                self.protector.set_remote_meta(Some(remote_meta.protector)),
             ]?;
         } else if force_notify {
             futures::try_join![
                 self.storage.set_remote_meta(None),
-                self.cryptor.set_remote_meta(None),
-                self.key_cryptor.set_remote_meta(None),
+                self.protector.set_remote_meta(None),
             ]?;
         }
 
@@ -700,23 +520,12 @@ where
         self.store_remote_meta().await
     }
 
-    async fn set_remote_meta_cryptor(
+    async fn set_remote_meta_protector(
         self: &Arc<Self>,
         remote_meta: MVReg<VersionBytes, Uuid>,
     ) -> Result<()> {
         self.data.with(|data| {
-            data.remote_meta.cryptor.merge(remote_meta);
-        });
-
-        self.store_remote_meta().await
-    }
-
-    async fn set_remote_meta_key_cryptor(
-        self: &Arc<Self>,
-        remote_meta: MVReg<VersionBytes, Uuid>,
-    ) -> Result<()> {
-        self.data.with(|data| {
-            data.remote_meta.key_cryptor.merge(remote_meta);
+            data.remote_meta.protector.merge(remote_meta);
         });
 
         self.store_remote_meta().await
@@ -742,10 +551,9 @@ where
     }
 }
 
-pub struct OpenOptions<ST, C, KC> {
+pub struct OpenOptions<ST, P> {
     pub storage: ST,
-    pub cryptor: C,
-    pub key_cryptor: KC,
+    pub protector: P,
     pub create: bool,
     pub supported_data_versions: Vec<Uuid>,
     pub current_data_version: Uuid,
@@ -765,8 +573,7 @@ pub(crate) struct StateWrapper<S> {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct RemoteMeta {
     storage: MVReg<VersionBytes, Uuid>,
-    cryptor: MVReg<VersionBytes, Uuid>,
-    key_cryptor: MVReg<VersionBytes, Uuid>,
+    protector: MVReg<VersionBytes, Uuid>,
 }
 
 impl CvRDT for RemoteMeta {
@@ -778,8 +585,7 @@ impl CvRDT for RemoteMeta {
 
     fn merge(&mut self, other: Self) {
         self.storage.merge(other.storage);
-        self.cryptor.merge(other.cryptor);
-        self.key_cryptor.merge(other.key_cryptor);
+        self.protector.merge(other.protector);
     }
 }
 

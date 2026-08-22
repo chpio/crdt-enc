@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 crdt-enc = {path="../../crdt-enc"}
 crdt-enc-tokio = {path="../../crdt-enc-tokio"}
-crdt-enc-xchacha20poly1305 = {path="../../crdt-enc-xchacha20poly1305"}
+crdt-enc-envelope = {path="../../crdt-enc-envelope"}
 crdt-enc-gpgme = {path="../../crdt-enc-gpgme"}
 uuid = {version = "1", features = ["serde", "v4"]}
 crdts = "7"

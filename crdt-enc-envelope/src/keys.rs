@@ -1,36 +1,14 @@
-use crate::{
-    CoreSubHandle,
-    utils::{VersionBytes, VersionBytesRef},
-};
 use ::anyhow::Result;
-use ::async_trait::async_trait;
-use ::crdts::{CmRDT, CvRDT, MVReg, Orswot, ctx::ReadCtx};
+use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
+use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};
 use ::serde::{Deserialize, Serialize};
 use ::std::{
     borrow::Borrow,
     cmp::{Eq, Ord, Ordering, PartialEq},
     convert::Infallible,
-    fmt::Debug,
     hash::{Hash, Hasher},
 };
 use ::uuid::Uuid;
-
-#[async_trait]
-pub trait KeyCryptor
-where
-    Self: 'static + Debug + Send + Sync + Sized,
-{
-    async fn init(&self, _core: &dyn CoreSubHandle) -> Result<()> {
-        Ok(())
-    }
-
-    async fn set_remote_meta(&self, _data: Option<MVReg<VersionBytes, Uuid>>) -> Result<()> {
-        Ok(())
-    }
-
-    /// It needs to give a new `ReadCtx<Keys>` to the core (`core.set_keys`)
-    async fn set_keys(&self, keys: ReadCtx<Keys, Uuid>) -> Result<()>;
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Keys {

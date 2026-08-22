@@ -10,64 +10,81 @@ sync transport/storage. Changes are persisted as either CRDT ops or full-state s
 are immutable (content-addressed by hash, never mutated after creation, only deleted during compaction)
 so they sync safely over simple replicating filesystems.
 
-The on-disk header/key scheme is modeled on LUKS: the actual data-encryption key is never derived
-directly from a password, so keys can be rotated (via multiple stored `Key` entries with a "latest key"
-CRDT register) without needing to re-encrypt every historical file. See [README.md](README.md) for the
-original design notes.
+`Core` itself is deliberately agnostic about *how* content gets protected — it only knows about a single
+`Protector` trait (`encrypt`/`decrypt` on opaque byte blobs). The LUKS-like design (a random, rotatable
+content-encryption key, itself protected by a swappable secondary mechanism such as a password or GPG
+recipients, so the key can be rotated or the password changed without re-encrypting historical files) is
+implemented as *one* `Protector` — [crdt-enc-envelope](crdt-enc-envelope/) — not baked into `Core`. See
+[README.md](README.md) for the original design notes that motivated this envelope-encryption approach.
 
 ## Workspace layout
 
 This is a Cargo workspace (resolver "2", edition 2024) with these crates:
 
-- [crdt-enc/](crdt-enc/) — the core, storage/transport-agnostic. Defines the `Core<S, ST, C, KC>`
-  engine and the three traits other crates implement:
+- [crdt-enc/](crdt-enc/) — the core, storage/crypto-agnostic. Defines the `Core<S, ST, P>` engine and
+  the two traits other crates implement:
   - [storage.rs](crdt-enc/src/storage.rs) — `Storage` trait: where/how encrypted blobs (local meta,
     remote meta, states, ops) are persisted and listed.
-  - [cryptor.rs](crdt-enc/src/cryptor.rs) — `Cryptor` trait: how data blobs are encrypted/decrypted
-    with a symmetric key (`gen_key`/`encrypt`/`decrypt`).
-  - [key_cryptor.rs](crdt-enc/src/key_cryptor.rs) — `KeyCryptor` trait: how the symmetric `Keys`
-    CRDT (an `Orswot` of `Key`s plus a `latest_key_id` `MVReg`) itself gets protected/shared, e.g. via
-    per-recipient asymmetric encryption.
+  - [protector.rs](crdt-enc/src/protector.rs) — `Protector` trait: `encrypt`/`decrypt` on opaque byte
+    blobs, plus `init`/`set_remote_meta` lifecycle hooks. `Core` has no concept of "keys" at all — it's
+    entirely up to the `Protector` implementation whether/how it manages key material.
+  - [keys.rs](crdt-enc/src/keys.rs) — `Keys`/`Key`: reusable CRDT machinery (an `Orswot` of `Key`s plus
+    a `latest_key_id` `MVReg`, converging via `Key: Ord` when multiple actors concurrently create the
+    first key before ever syncing) for `Protector` implementations that want key rotation. Not used by
+    `Core` itself — only by [crdt-enc-envelope](crdt-enc-envelope/).
   - [utils/](crdt-enc/src/utils/) — `VersionBytes`/`VersionBytesRef`/`VersionBytesBuf` (a UUID version
-    tag prepended to a byte blob, used everywhere data is serialized so formats can evolve safely) and
-    `LockBox` (a sync-`Mutex` wrapper used to guard `Core`'s in-memory state without holding a lock
-    across `.await`).
+    tag prepended to a byte blob, used everywhere data is serialized so formats can evolve safely),
+    `LockBox` (a sync-`Mutex` wrapper used to guard mutable state without holding a lock across
+    `.await`), and `decode_version_bytes_mvreg_custom_phf`/`encode_version_bytes_mvreg_custom` (generic
+    helpers for merging/writing an encrypted `T: CvRDT` value into a synced `MVReg<VersionBytes, Uuid>`
+    register — the extension point where a `Protector` plugs in its actual encrypt/decrypt).
+- [crdt-enc-envelope/](crdt-enc-envelope/) — a `Protector` implementing envelope encryption: manages its
+  own rotating `Keys` CRDT (bootstrapping a new random content key if none exists yet, converging via
+  `Keys::latest_key()`'s min-by-id if multiple devices bootstrap concurrently) and encrypts content
+  directly with XChaCha20-Poly1305 using the current key. Protecting that one content key is delegated to
+  a generic `KeySlotProtector` sub-trait (`wrap_key`/`unwrap_key` on a raw key blob, no CRDT/sync
+  concerns) — `EnvelopeProtector<KS>` is generic over it.
 - [crdt-enc-tokio/](crdt-enc-tokio/) — a `Storage` implementation backed by the local filesystem via
   Tokio, using two directories: a `local_path` (device-local meta) and a `remote_path` (the
-  syncthing-shared tree, subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`).
-- [crdt-enc-xchacha20poly1305/](crdt-enc-xchacha20poly1305/) — a `Cryptor` implementation using
-  XChaCha20-Poly1305 (via the `chacha20poly1305` crate) for symmetric encryption of data blobs.
-- [crdt-enc-gpgme/](crdt-enc-gpgme/) — a `KeyCryptor` implementation intended to protect the `Keys`
-  CRDT with GPG/OpenPGP (via `gpgme`); the actual encrypt/decrypt calls are still stubbed as TODOs, see
+  syncthing-shared tree, subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`). Locks
+  `local_path` for exclusive use by this process (via `fs4`/`flock`, lazily on first local-meta access)
+  so the same actor's local storage can't be opened by two processes at once.
+- [crdt-enc-gpgme/](crdt-enc-gpgme/) — a `KeySlotProtector` implementation intended to wrap the content
+  key for GPG/OpenPGP recipients (via `gpgme`); `wrap_key`/`unwrap_key` are still stubbed as TODOs, see
   [crdt-enc-gpgme/src/lib.rs](crdt-enc-gpgme/src/lib.rs). Requires the system `gpgme` library to build.
-- [examples/test/](examples/test/) — a minimal binary wiring the tokio storage + xchacha20poly1305
-  cryptor + gpgme key-cryptor together against a CRDT `MVReg<u64, Uuid>` state, useful as the
-  reference for how the pieces fit together end to end.
+- [examples/test/](examples/test/) — a minimal binary wiring the tokio storage + an
+  `EnvelopeProtector<KeyHandler>` (gpgme's stub key-slot) together against a CRDT `MVReg<u64, Uuid>`
+  state, useful as the reference for how the pieces fit together end to end.
 
 `Cargo.toml` at the workspace root also patches `agnostik` (the async-runtime-agnostic `spawn_blocking`
-helper used by the xchacha20poly1305 crate) to a git branch — don't "helpfully" remove that patch.
+helper used by `crdt-enc-envelope` for its Argon2/AEAD work) to a git branch — don't "helpfully" remove
+that patch.
 
 ## Core architecture (`crdt-enc/src/lib.rs`)
 
-`Core<S, ST, C, KC>` is generic over the CRDT state type `S` and the three trait impls (`ST: Storage`,
-`C: Cryptor`, `KC: KeyCryptor`). Important flow to understand before changing this file:
+`Core<S, ST, P>` is generic over the CRDT state type `S` and two trait impls (`ST: Storage`,
+`P: Protector`). Important flow to understand before changing this file:
 
 - `Core::open` loads/creates `LocalMeta` (which holds a per-device random `local_actor_id`), then calls
-  `init` on storage/cryptor/key_cryptor concurrently, then does an initial `read_remote_meta_` pass, and
-  finally generates a new data-encryption key if none exists yet.
+  `init` on storage/protector concurrently, then does an initial `read_remote_meta_` pass. Unlike before
+  the `Protector` refactor, `Core::open` does **not** generate or manage any encryption key itself —
+  that's entirely the protector's job (see `EnvelopeProtector::set_remote_meta` for where the "bootstrap
+  a key if none exists yet" logic now lives).
 - All mutable in-process state lives in `CoreMutData` behind `Core.data: LockBox<..>` — never hold the
   lock across an `.await`; pull needed values out inside `data.with(...)`/`data.try_with(...)` closures
   first, then `.await` outside.
-- The `remote_meta` field is itself a small CRDT (`RemoteMeta`, a `CvRDT` composed of three `MVReg`s)
-  used to let storage/cryptor/key_cryptor gossip their own out-of-band metadata (e.g. GPG recipient
-  fingerprints) between devices the same way the app data syncs — via `set_remote_meta_*` /
-  `CoreSubHandle`.
+- The `remote_meta` field is itself a small CRDT (`RemoteMeta`, a `CvRDT` composed of two `MVReg`s: one
+  for storage, one for the protector) used to let storage/protector gossip their own out-of-band metadata
+  between devices the same way the app data syncs — via `set_remote_meta_storage`/
+  `set_remote_meta_protector` / `CoreSubHandle`.
 - `CoreSubHandle` is the object-safe, `dyn`-compatible handle (`Arc<Core<..>>` implements it) passed
-  into `Storage::init`/`Cryptor::init`/`KeyCryptor::init` and stored by implementors (e.g.
-  [crdt-enc-gpgme](crdt-enc-gpgme/src/lib.rs) clones it via `dyn_clone` to call back into `Core` later
-  for `set_keys`/`set_remote_meta_key_cryptor`).
-- `apply_ops` serializes+encrypts a batch of CRDT ops and writes them via `Storage::store_ops`, guarded
-  by `apply_ops_lock` so ops from this actor are never interleaved/misordered.
+  into `Storage::init`/`Protector::init` and stored by implementors (e.g.
+  [crdt-enc-envelope](crdt-enc-envelope/src/lib.rs) clones it via `dyn_clone` to call back into `Core`
+  later for `set_remote_meta_protector`).
+- `read_and_apply` atomically reads state, builds a batch of CRDT ops from it, encrypts, and writes them
+  via `Storage::store_ops` — all under a single `state_lock` (also taken by the remote-merge paths in
+  `read_remote_states`/`read_remote_ops`) so a local apply and a remote merge can never interleave between
+  a `read_and_apply` closure's read and its write.
 - `compact` snapshots the current state into a new encrypted full-state file, then removes the
   now-redundant state/op files it superseded.
 - Every persisted blob is versioned with a `Uuid` via `VersionBytes` and checked against a

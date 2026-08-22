@@ -1,7 +1,7 @@
 use ::anyhow::Result;
+use ::crdt_enc_envelope::EnvelopeProtector;
 use ::crdt_enc_gpgme::KeyHandler;
 use ::crdt_enc_tokio::Storage;
-use ::crdt_enc_xchacha20poly1305::EncHandler;
 use ::uuid::Uuid;
 
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0xaadfd5a6_6e19_4b24_a802_4fa27c72f20c);
@@ -13,12 +13,10 @@ async fn main() -> Result<()> {
     let data_dir = std::fs::canonicalize("./").unwrap().join("data");
 
     let storage = Storage::new(data_dir.join("local"), data_dir.join("remote"))?;
-    let cryptor = EncHandler::new();
-    let key_cryptor = KeyHandler::new();
+    let protector = EnvelopeProtector::new(KeyHandler::new());
     let open_options = crdt_enc::OpenOptions {
         storage,
-        cryptor,
-        key_cryptor,
+        protector,
         create: true,
         supported_data_versions: SUPPORTED_DATA_VERSIONS.iter().cloned().collect(),
         current_data_version: CURRENT_DATA_VERSION,
