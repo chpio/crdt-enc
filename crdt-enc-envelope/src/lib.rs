@@ -163,28 +163,44 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
         Ok(())
     }
 
-    /// Encrypts `clear_text` with the current content key (XChaCha20Poly1305). Fails if no
-    /// content key has been established yet (see `set_remote_meta`).
+    /// Encrypts `clear_text` with the current content key (XChaCha20Poly1305), tagging the
+    /// ciphertext with that key's id so `decrypt` can look up the exact same key later even
+    /// after a rotation. Fails if no content key has been established yet (see
+    /// `set_remote_meta`).
     async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
         let key = self
             .data
             .with(|data| data.keys.latest_key())
             .context("no latest key")?;
-        encrypt_content(key.key(), clear_text).await
+        encrypt_content(key.id(), key.key(), clear_text).await
     }
 
-    /// Reverses `encrypt`. Fails if no content key has been established yet, the ciphertext was
-    /// encrypted with a different key, or authentication fails.
+    /// Reverses `encrypt`. Looks up the specific key the ciphertext was tagged with (not
+    /// necessarily the current latest one, e.g. after a rotation) via `Keys::get_key`. Fails if
+    /// that key is unknown, the ciphertext was tampered with, or authentication fails.
     async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
+        let version_box: VersionBytesRef =
+            rmp_serde::from_slice(&enc_data).context("failed to parse version box")?;
+        version_box
+            .ensure_version(DATA_VERSION)
+            .context("not matching version of encryption box")?;
+        let enc_box: EncBox = rmp_serde::from_slice(version_box.as_ref())
+            .context("failed to parse encryption box")?;
+
         let key = self
             .data
-            .with(|data| data.keys.latest_key())
-            .context("no latest key")?;
-        decrypt_content(key.key(), enc_data).await
+            .with(|data| data.keys.get_key(enc_box.key_id))
+            .with_context(|| format!("no key with id {}", enc_box.key_id))?;
+
+        decrypt_content(key.key(), enc_box).await
     }
 }
 
-async fn encrypt_content(key: VersionBytesRef<'_>, clear_text: Vec<u8>) -> Result<Vec<u8>> {
+async fn encrypt_content(
+    key_id: Uuid,
+    key: VersionBytesRef<'_>,
+    clear_text: Vec<u8>,
+) -> Result<Vec<u8>> {
     key.ensure_version(KEY_VERSION)
         .context("not matching key version")?;
     if key.as_ref().len() != KEY_LEN {
@@ -204,6 +220,7 @@ async fn encrypt_content(key: VersionBytesRef<'_>, clear_text: Vec<u8>) -> Resul
             .encrypt(xnonce, clear_text.as_ref())
             .context("Encryption failed")?;
         let enc_box = EncBox {
+            key_id,
             nonce: Cow::Borrowed(nonce.as_ref()),
             enc_data: Cow::Owned(enc_data),
         };
@@ -217,30 +234,27 @@ async fn encrypt_content(key: VersionBytesRef<'_>, clear_text: Vec<u8>) -> Resul
     .await
 }
 
-async fn decrypt_content(key: VersionBytesRef<'_>, enc_data: Vec<u8>) -> Result<Vec<u8>> {
+/// Decrypts an already-parsed [`EncBox`] with `key` (which the caller has already looked up via
+/// the box's `key_id`).
+async fn decrypt_content(key: VersionBytesRef<'_>, enc_box: EncBox<'_>) -> Result<Vec<u8>> {
     key.ensure_version(KEY_VERSION)
         .context("not matching key version")?;
     if key.as_ref().len() != KEY_LEN {
         return Err(Error::msg("Invalid key length"));
     }
+    if enc_box.nonce.as_ref().len() != NONCE_LEN {
+        return Err(Error::msg("Invalid nonce length"));
+    }
     let key = key.as_ref().to_vec();
+    let nonce = enc_box.nonce.into_owned();
+    let ciphertext = enc_box.enc_data.into_owned();
 
     spawn_blocking(move || {
-        let version_box: VersionBytesRef =
-            rmp_serde::from_slice(&enc_data).context("failed to parse version box")?;
-        version_box
-            .ensure_version(DATA_VERSION)
-            .context("not matching version of encryption box")?;
-        let enc_box: EncBox = rmp_serde::from_slice(version_box.as_ref())
-            .context("failed to parse encryption box")?;
-        if enc_box.nonce.as_ref().len() != NONCE_LEN {
-            return Err(Error::msg("Invalid nonce length"));
-        }
         let aead_key = AeadKey::from_slice(&key);
         let aead = XChaCha20Poly1305::new(aead_key);
-        let xnonce = XNonce::from_slice(&enc_box.nonce);
+        let xnonce = XNonce::from_slice(&nonce);
         let clear_text = aead
-            .decrypt(xnonce, enc_box.enc_data.as_ref())
+            .decrypt(xnonce, ciphertext.as_ref())
             .context("Decryption failed")?;
         Ok(clear_text)
     })
@@ -249,6 +263,8 @@ async fn decrypt_content(key: VersionBytesRef<'_>, enc_data: Vec<u8>) -> Result<
 
 #[derive(Serialize, Deserialize, Debug)]
 struct EncBox<'a> {
+    key_id: Uuid,
+
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
     nonce: Cow<'a, [u8]>,
