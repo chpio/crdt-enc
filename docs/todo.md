@@ -14,7 +14,15 @@
   oversized (~490 transitive deps even with minimal features)
 * https://github.com/BurntSushi/quickcheck
 * ist agnostik noch aktuell/wird es noch geupdatet? Alternativen?
-* wird async_trait noch benötigt? sollte doch jetzt auch nativ gehen in rust
+* drop async_trait from Storage/Protector/KeySlotProtector -- verified (rustc 1.99.0-nightly) that
+  native async fn in traits works fine for these, since they're only ever used via generic bounds
+  (ST: Storage, P: Protector, KS: KeySlotProtector), never as `dyn Trait`; returned futures are
+  Send automatically, no extra ceremony needed. CoreSubHandle must keep async_trait: it's used as
+  `dyn CoreSubHandle`/`Box<dyn CoreSubHandle>` (EnvelopeProtector stores one to call back into Core
+  later, e.g. from rotate_key), and native async fn in traits is still not dyn-compatible even on
+  the latest nightly (confirmed empirically, E0038). That `dyn` usage itself isn't an outdated
+  workaround either -- it breaks a genuine circular-generics problem (a protector needing to hold a
+  handle back to the very Core that's generic over the protector's own type), not a tooling gap.
 * PasswordKeySlot must keep the cleartext password in memory for its entire lifetime (only
   Zeroizing-protected on drop), because unwrap_key must be able to handle a not-yet-seen salt at
   any time (e.g. a new device joining sync later with its own independently-bootstrapped entry) --
