@@ -112,7 +112,7 @@ There is no CI config and no linter beyond `cargo fmt`/`cargo check` in this rep
 
 ## Notes on current state
 
-[todo.md](todo.md) tracks known rough edges the maintainer is aware of — check it before assuming an
+[docs/todo.md](docs/todo.md) tracks known rough edges the maintainer is aware of — check it before assuming an
 `unwrap()`, missing validation, or stubbed encryption (e.g. the TODO comments in
 [crdt-enc-gpgme/src/lib.rs](crdt-enc-gpgme/src/lib.rs)) is an oversight to silently fix rather than
 known, intentionally-deferred work.
