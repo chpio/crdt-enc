@@ -1,5 +1,4 @@
 use ::anyhow::{Context, Error, Result, ensure};
-use ::async_trait::async_trait;
 use ::bytes::Buf;
 use ::crdt_enc::utils::{LockBox, VersionBytes, VersionBytesRef};
 use ::fs4::tokio::AsyncFileExt;
@@ -82,7 +81,6 @@ impl Storage {
     }
 }
 
-#[async_trait]
 impl crdt_enc::storage::Storage for Storage {
     async fn load_local_meta(&self) -> Result<Option<VersionBytes>> {
         self.ensure_local_lock().await?;

@@ -5,7 +5,6 @@ authors = ["Thomas Heck <t@b128.net>"]
 edition = "2024"
 
 [dependencies]
-async-trait = "0.1"
 anyhow = "1"
 gpgme = "0.11"
 

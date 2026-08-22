@@ -7,7 +7,6 @@ edition = "2024"
 [dependencies]
 crdts = "7"
 serde = "1"
-async-trait = "=0.1.42" # https://github.com/dtolnay/async-trait/issues/144
 futures = "0.3"
 anyhow = "1"
 uuid = "1"

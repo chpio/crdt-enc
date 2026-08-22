@@ -1,7 +1,6 @@
 use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
-use ::async_trait::async_trait;
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::LockBox;
 use ::crdt_enc_envelope::KeySlotProtector;
@@ -127,7 +126,6 @@ impl PasswordKeySlot {
     }
 }
 
-#[async_trait]
 impl KeySlotProtector for PasswordKeySlot {
     async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;

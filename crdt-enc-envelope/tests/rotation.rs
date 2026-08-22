@@ -1,5 +1,4 @@
 use ::anyhow::Result;
-use ::async_trait::async_trait;
 use ::crdt_enc::OpenOptions;
 use ::crdt_enc_envelope::{EnvelopeProtector, KeySlotProtector};
 use ::crdt_enc_tokio::Storage;
@@ -15,7 +14,6 @@ const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 #[derive(Debug)]
 struct NoopKeySlot;
 
-#[async_trait]
 impl KeySlotProtector for NoopKeySlot {
     async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         Ok(key.to_vec())

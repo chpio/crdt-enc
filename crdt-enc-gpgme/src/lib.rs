@@ -1,5 +1,4 @@
 use ::anyhow::Result;
-use ::async_trait::async_trait;
 use ::crdt_enc_envelope::KeySlotProtector;
 
 pub fn init() {
@@ -21,7 +20,6 @@ impl Default for KeyHandler {
     }
 }
 
-#[async_trait]
 impl KeySlotProtector for KeyHandler {
     async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         // TODO: encrypt for GPG recipients
