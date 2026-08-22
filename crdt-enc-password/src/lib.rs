@@ -41,12 +41,15 @@ pub struct PasswordKeySlot {
     m_cost: u32,
     t_cost: u32,
     p_cost: u32,
-    /// This instance's own (salt, derived key) for `wrap_key`, generated lazily once and reused
-    /// for the rest of its lifetime — there's no security benefit to a fresh salt per wrap here
-    /// (the AEAD's random nonce already makes reusing one key across many messages safe), and a
-    /// fresh salt would mean re-running Argon2 on every wrap.
+    /// This instance's own (salt, derived key) for `wrap_key`, decided lazily once (preferring an
+    /// already-known salt from `unwrap_cache` over minting a fresh one, see `own_salt_kek`) and
+    /// reused for the rest of its lifetime — there's no security benefit to a fresh salt per wrap
+    /// here (the AEAD's random nonce already makes reusing one key across many messages safe),
+    /// and a fresh salt would mean re-running Argon2 on every wrap.
     own: LockBox<Option<(Vec<u8>, Kek)>>,
-    /// Derived keys seen so far, keyed by salt, for `unwrap_key`.
+    /// Derived keys seen so far, keyed by salt, for `unwrap_key` -- and, via `own_salt_kek`, also
+    /// the source `wrap_key` prefers to converge on a single shared salt across devices instead
+    /// of each independently minting its own.
     unwrap_cache: LockBox<HashMap<Vec<u8>, Kek>>,
 }
 
@@ -75,10 +78,30 @@ impl PasswordKeySlot {
         }
     }
 
-    /// Returns this instance's own (salt, derived key) pair, generating and caching one (in
-    /// `own` and `unwrap_cache`) on first use.
+    /// Returns this instance's own (salt, derived key) pair for `wrap_key`, deciding and caching
+    /// one (in `own`) on first use. Prefers reusing the lexicographically smallest salt already
+    /// known via `unwrap_cache` (e.g. from decoding another device's entry during the
+    /// `set_remote_meta` merge that precedes this call, same min-by-id tiebreak philosophy as
+    /// `Keys::latest_key()`) over minting a fresh one -- lets devices converge on one shared salt
+    /// instead of each picking their own, so a device that already knows the canonical salt
+    /// doesn't trigger an extra Argon2 run the next time it needs to wrap something itself (e.g.
+    /// a rotation). Only mints a genuinely fresh salt if none is known yet (true first-ever
+    /// bootstrap). Not revisited after the first call, even if a smaller salt becomes known
+    /// later -- unlike `Keys::latest_key()`, this is a one-time decision, not recomputed every
+    /// call; in the rare case of two truly concurrent first-time bootstraps, each side may freeze
+    /// on its own salt rather than converging, which is an accepted trade-off for simplicity.
     async fn own_salt_kek(&self) -> Result<(Vec<u8>, Kek)> {
         if let Some(pair) = self.own.with(|own| own.clone()) {
+            return Ok(pair);
+        }
+
+        if let Some(pair) = self.unwrap_cache.with(|cache| {
+            cache
+                .iter()
+                .min_by(|a, b| a.0.cmp(b.0))
+                .map(|(salt, kek)| (salt.clone(), kek.clone()))
+        }) {
+            self.own.with(|own| *own = Some(pair.clone()));
             return Ok(pair);
         }
 
@@ -270,12 +293,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn different_instances_use_different_salts() {
+    async fn isolated_instances_that_never_synced_use_different_salts() {
         let key = b"secret key bytes";
 
         let wrapped_a = fast_key_slot("a password").wrap_key(key).await.unwrap();
         let wrapped_b = fast_key_slot("a password").wrap_key(key).await.unwrap();
 
         assert_ne!(wrapped_a, wrapped_b);
+    }
+
+    #[tokio::test]
+    async fn instance_that_saw_a_wrap_converges_on_its_salt() {
+        let key = b"secret key bytes";
+
+        // instance A mints the first-ever salt
+        let a = fast_key_slot("shared password");
+        let wrapped_by_a = a.wrap_key(key).await.unwrap();
+
+        // instance B "syncs" by unwrapping A's entry before ever wrapping anything itself --
+        // mirrors EnvelopeProtector::set_remote_meta decoding existing entries before deciding
+        // whether it needs to wrap a new one
+        let b = fast_key_slot("shared password");
+        assert_eq!(b.unwrap_key(&wrapped_by_a).await.unwrap(), key);
+
+        // B's own first wrap must now reuse A's salt instead of minting a third one
+        let wrapped_by_b = b.wrap_key(key).await.unwrap();
+        assert_eq!(a.unwrap_key(&wrapped_by_b).await.unwrap(), key);
+
+        #[derive(::serde::Deserialize)]
+        struct EnvelopeSalt {
+            #[serde(with = "serde_bytes")]
+            salt: Vec<u8>,
+        }
+        let salt_a: EnvelopeSalt = rmp_serde::from_slice(&wrapped_by_a).unwrap();
+        let salt_b: EnvelopeSalt = rmp_serde::from_slice(&wrapped_by_b).unwrap();
+        assert_eq!(salt_a.salt, salt_b.salt);
     }
 }
