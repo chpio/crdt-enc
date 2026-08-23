@@ -1,4 +1,4 @@
-//! A [`crdt_enc::Protector`] implementing LUKS-style envelope encryption: content is protected
+//! A [`crdt_enc::protector::Protector`] implementing LUKS-style envelope encryption: content is protected
 //! directly with a random, rotatable content-encryption key managed by [`EnvelopeProtector`], while
 //! that one key is in turn protected by a swappable [`KeySlotProtector`] (e.g. a password or GPG
 //! recipients) -- so the key can be rotated, or the way it's protected changed, without
