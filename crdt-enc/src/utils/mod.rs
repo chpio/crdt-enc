@@ -1,3 +1,5 @@
+/// The `VersionBytes`/`VersionBytesRef`/`VersionBytesBuf` family: a UUID version tag prepended to a
+/// byte blob, used everywhere data is serialized so formats can evolve safely.
 mod version_bytes;
 
 pub use version_bytes::*;
@@ -9,31 +11,45 @@ use ::serde::{Deserialize, Serialize, de::DeserializeOwned};
 use ::std::{convert::Infallible, fmt::Debug, sync::Mutex as SyncMutex};
 use ::uuid::Uuid;
 
+/// A `CvRDT`/`CmRDT` with no state and no ops -- everything about it is a no-op. Useful as a
+/// placeholder `S` for `Core<S, ST, P>` in contexts that only exercise storage/protector behavior
+/// and don't need real app data.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmptyCrdt;
 
 impl CmRDT for EmptyCrdt {
+    /// No operation carries any data.
     type Op = ();
 
+    /// Applying an op can never fail.
     type Validation = Infallible;
 
+    /// Always succeeds; see `Validation`.
     fn validate_op(&self, _op: &Self::Op) -> Result<(), Infallible> {
         Ok(())
     }
 
+    /// No-op.
     fn apply(&mut self, _op: Self::Op) {}
 }
 
 impl CvRDT for EmptyCrdt {
+    /// Merging can never fail.
     type Validation = Infallible;
 
+    /// Always succeeds; see `Validation`.
     fn validate_merge(&self, _other: &Self) -> Result<(), Infallible> {
         Ok(())
     }
 
+    /// No-op.
     fn merge(&mut self, _other: Self) {}
 }
 
+/// Decodes and merges every concurrent `VersionBytes` value in an `MVReg<VersionBytes, Uuid>`
+/// register into a single `T`, version-checking each value against `supported_versions` first (must
+/// be sorted). This is the plaintext counterpart of `decode_version_bytes_mvreg_custom`, for
+/// registers that were never protector-encrypted in the first place.
 pub fn decode_version_bytes_mvreg<T: DeserializeOwned + CvRDT + Default>(
     reg: &MVReg<VersionBytes, Uuid>,
     supported_versions: &[Uuid],
@@ -91,6 +107,8 @@ where
     })
 }
 
+/// Identical to `decode_version_bytes_mvreg_custom`, but checks each value's version against a
+/// `phf::Set` (e.g. a crate's `SUPPORTED_VERSIONS` constant) instead of a sorted slice.
 pub async fn decode_version_bytes_mvreg_custom_phf<T, M, Fut>(
     reg: &MVReg<VersionBytes, Uuid>,
     supported_versions: &phf::Set<u128>,
@@ -125,6 +143,10 @@ where
     })
 }
 
+/// Serializes `val` (with its causal `ReadCtx`) as a new `VersionBytes` entry and writes it into the
+/// register as one op from `actor`, immediately applying that op locally. This is the plaintext
+/// counterpart of `encode_version_bytes_mvreg_custom`, for registers that don't need
+/// protector-encryption.
 pub fn encode_version_bytes_mvreg<T: Serialize>(
     reg: &mut MVReg<VersionBytes, Uuid>,
     val: ReadCtx<T, Uuid>,
@@ -139,6 +161,10 @@ pub fn encode_version_bytes_mvreg<T: Serialize>(
     Ok(())
 }
 
+/// Like `encode_version_bytes_mvreg`, but runs the serialized msgpack bytes through `buf_encode`
+/// (e.g. a `Protector::encrypt` call) before wrapping them in `VersionBytes` and writing the op --
+/// the extension point where a `Protector` plugs in its actual encryption when merging an encrypted
+/// value into a synced `MVReg<VersionBytes, Uuid>` register.
 pub async fn encode_version_bytes_mvreg_custom<T, M, Fut>(
     reg: &mut MVReg<VersionBytes, Uuid>,
     val: ReadCtx<T, Uuid>,
@@ -171,12 +197,16 @@ pub struct LockBox<T> {
 }
 
 impl<T> LockBox<T> {
+    /// Wraps `val` in a new `LockBox`.
     pub fn new(val: T) -> LockBox<T> {
         LockBox {
             inner: SyncMutex::new(val),
         }
     }
 
+    /// Locks the box and runs `f` against the guarded value, returning its result. Do not `.await`
+    /// inside `f` -- the lock is a sync `std::sync::Mutex`, so holding it across an await point
+    /// risks deadlocking the executor.
     pub fn with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,

@@ -1,5 +1,18 @@
+//! The storage/crypto-agnostic core of `crdt-enc`: [`Core<S, ST, P>`] persists a CRDT's ops and
+//! full-state snapshots as immutable, content-addressed blobs, entirely agnostic about *where*
+//! they're stored (`ST: Storage`) and *how* they're protected (`P: Protector`) -- those concerns are
+//! implemented by other crates that plug into the two traits this crate defines.
+#![warn(missing_docs)]
+
+/// The `Protector` trait and its default no-op lifecycle hooks -- how `Core` encrypts/decrypts the
+/// opaque blobs it persists.
 pub mod protector;
+/// The `Storage` trait and its default no-op lifecycle hooks -- where/how `Core` persists and
+/// lists blobs.
 pub mod storage;
+/// Reusable helpers shared across this crate and its implementors: [`VersionBytes`]-family
+/// UUID-tagged byte-blob versioning, [`LockBox`], and the `MVReg<VersionBytes, _>`
+/// encode/decode/merge helpers protector/storage implementations plug their crypto into.
 pub mod utils;
 
 use crate::{
@@ -21,29 +34,54 @@ use ::std::{
 };
 use ::uuid::Uuid;
 
+/// The version tag `crdt-enc` itself stamps onto the outer [`VersionBytes`] wrapper it puts around
+/// every protector-encrypted blob (local meta, remote meta, states, ops) -- distinct from the
+/// caller-controlled `current_data_version`/`supported_data_versions` used for the *inner*,
+/// already-decrypted payload.
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0xe834d789_101b_4634_9823_9de990a9051f);
 
+/// The set of `CURRENT_VERSION`-style outer-wrapper versions this build can still read; checked via
+/// [`VersionBytes::ensure_versions_phf`] before deserializing. Extend when introducing a new outer
+/// wrapper format, keeping old versions readable rather than bumping in place.
 static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
     // current
     0x_e834d789_101b_4634_9823_9de990a9051f_u128,
 };
 
+/// The object-safe, `dyn`-compatible handle into a `Core` passed to `Storage::init`/`Protector::init`
+/// and stored by implementations that need to call back into `Core` later (e.g.
+/// `EnvelopeProtector` clones it via `dyn_clone` to publish protector metadata after a key
+/// rotation). `Arc<Core<S, ST, P>>` implements this for any concrete `S`/`ST`/`P`, erasing those
+/// type parameters behind `dyn CoreSubHandle`.
 #[async_trait]
 pub trait CoreSubHandle
 where
     Self: 'static + Debug + Send + Sync + DynClone,
 {
+    /// This device's own actor/session info, e.g. its `local_actor_id`.
     fn info(&self) -> Info;
 
+    /// See [`Core::compact`].
     async fn compact(&self) -> Result<()>;
+    /// See [`Core::read_remote`].
     async fn read_remote(&self) -> Result<()>;
+    /// Re-reads and merges any remote-meta entries this device hasn't seen yet, notifying
+    /// storage/protector of the result even if nothing new was found (unlike the initial read done
+    /// by `Core::open`, which always notifies).
     async fn read_remote_meta(&self) -> Result<()>;
 
+    /// Merges `remote_meta` into this `Core`'s storage-owned slice of `RemoteMeta` and persists the
+    /// result, notifying `Storage::set_remote_meta` of the merged value. Called by a `Storage`
+    /// implementation to publish its own out-of-band metadata for other devices to pick up.
     async fn set_remote_meta_storage(&self, remote_meta: MVReg<VersionBytes, Uuid>) -> Result<()>;
+    /// The protector-owned counterpart to `set_remote_meta_storage`, notifying
+    /// `Protector::set_remote_meta` instead.
     async fn set_remote_meta_protector(&self, remote_meta: MVReg<VersionBytes, Uuid>)
     -> Result<()>;
 }
 
+/// Delegates each method to the identically-named inherent `Core` method, erasing `S`/`ST`/`P`
+/// behind `dyn CoreSubHandle`.
 #[async_trait]
 impl<S, ST, P> CoreSubHandle for Arc<Core<S, ST, P>>
 where
@@ -89,12 +127,25 @@ where
     }
 }
 
+/// The storage/crypto-agnostic engine at the heart of this crate: generic over the CRDT state type
+/// `S` and the two trait implementations that give it somewhere to persist data (`ST: Storage`) and
+/// something to protect it with (`P: Protector`). Construct via [`Core::open`]; all further
+/// interaction goes through its inherent methods (`with_state`, `read_and_apply`, `compact`,
+/// `read_remote`, ...) on the returned `Arc<Core<..>>`.
 #[derive(Debug)]
 pub struct Core<S, ST, P> {
+    /// Where blobs are persisted/listed.
     storage: ST,
+    /// How blobs are protected before being handed to `storage`.
     protector: P,
+    /// All mutable in-process state, behind a sync mutex -- never held across an `.await`; values
+    /// needed across an await point are pulled out inside a `data.with(...)`/`data.try_with(...)`
+    /// closure first.
     data: LockBox<CoreMutData<S>>,
+    /// The sorted set of inner-payload data versions this `Core` can still read, checked before
+    /// deserializing a decrypted state/op payload.
     supported_data_versions: Vec<Uuid>,
+    /// The inner-payload data version newly-written state/op payloads are stamped with.
     current_data_version: Uuid,
     /// Guards every section that reads-then-mutates `data.state` (local op application and remote
     /// state/op merges), so a `read_and_apply` op is never built from a causal context that a
@@ -102,12 +153,22 @@ pub struct Core<S, ST, P> {
     state_lock: AsyncMutex<()>,
 }
 
+/// All of `Core`'s mutable in-process state, guarded together by `Core::data` so it's always
+/// mutated/read as one consistent snapshot.
 #[derive(Debug)]
 struct CoreMutData<S> {
+    /// This device's own local metadata, `None` only until `Core::open` finishes loading/creating
+    /// it.
     local_meta: Option<LocalMeta>,
+    /// This device's merged view of the storage/protector out-of-band gossip metadata.
     remote_meta: RemoteMeta,
+    /// The current CRDT state plus the per-actor op versions already folded into it.
     state: StateWrapper<S>,
+    /// Names of full-state snapshots already merged into `state`, so `read_remote_states` doesn't
+    /// re-load/re-merge them.
     read_states: HashSet<String>,
+    /// Names of remote-meta blobs already merged into `remote_meta`, so `read_remote_meta_` doesn't
+    /// re-load/re-merge them.
     read_remote_metas: HashSet<String>,
 }
 
@@ -127,6 +188,11 @@ where
     ST: Storage,
     P: Protector,
 {
+    /// Opens (creating if `options.create` and no local meta exists yet) a `Core` backed by the
+    /// given storage/protector. Loads/creates this device's `LocalMeta`, runs `Storage::init` and
+    /// `Protector::init` concurrently, then does an initial remote-meta read (always notifying
+    /// storage/protector of the result, even if nothing was found). Does not generate or manage any
+    /// encryption key itself -- that's entirely the protector's job.
     pub async fn open(options: OpenOptions<ST, P>) -> Result<Arc<Self>> {
         let mut supported_data_versions = options.supported_data_versions;
         supported_data_versions.sort_unstable();
@@ -190,6 +256,8 @@ where
         Ok(core)
     }
 
+    /// This device's own actor/session info, e.g. its `local_actor_id`. Panics if called before
+    /// `Core::open` has finished loading/creating local meta.
     pub fn info(self: &Arc<Self>) -> Info {
         self.data.with(|data| {
             let actor = data
@@ -208,7 +276,9 @@ where
         &self.protector
     }
 
-    /// Locks cores data, do not call recursivl
+    /// Runs `f` against the current CRDT state under `Core`'s data lock. Do not call this
+    /// recursively (e.g. from inside another `with_state`/`read_and_apply` closure) -- the
+    /// underlying lock is not reentrant.
     pub fn with_state<F, R>(self: &Arc<Self>, f: F) -> Result<R>
     where
         F: FnOnce(&S) -> Result<R>,
@@ -270,6 +340,8 @@ where
         Ok(())
     }
 
+    /// Snapshots the current (fully up-to-date, after an internal `read_remote`) state into a new
+    /// encrypted full-state file, then removes the now-redundant state/op files it superseded.
     pub async fn compact(self: &Arc<Self>) -> Result<()> {
         self.read_remote().await?;
 
@@ -312,6 +384,7 @@ where
         Ok(())
     }
 
+    /// Merges in any full-state snapshots and ops this device hasn't seen yet, from storage.
     pub async fn read_remote(self: &Arc<Self>) -> Result<()> {
         let states_read = self.read_remote_states().await?;
         let ops_read = self.read_remote_ops().await?;
@@ -323,6 +396,9 @@ where
         Ok(())
     }
 
+    /// Loads, decrypts and merges every not-yet-seen full-state snapshot listed by `Storage`.
+    /// Returns whether any were actually merged. Takes `state_lock` only around the merge itself,
+    /// after the (slow) decrypt/deserialize work.
     async fn read_remote_states(self: &Arc<Self>) -> Result<bool> {
         let names = self
             .storage
@@ -384,6 +460,11 @@ where
         Ok(states_read)
     }
 
+    /// Loads, decrypts and applies every not-yet-seen op of every actor listed by `Storage`.
+    /// Returns whether any were actually applied. Requires each actor's ops to arrive in
+    /// contiguous, strictly ascending order (per the `Storage::load_ops` contract); a gap is
+    /// treated as a storage bug and returns an error, while an already-applied version is silently
+    /// skipped (harmless race with a concurrent call to this function).
     async fn read_remote_ops(self: &Arc<Self>) -> Result<bool> {
         let actors = self
             .storage
@@ -454,10 +535,15 @@ where
         Ok(ops_read)
     }
 
+    /// The `CoreSubHandle::read_remote_meta` implementation -- see there.
     async fn read_remote_meta(self: &Arc<Self>) -> Result<()> {
         self.read_remote_meta_(false).await
     }
 
+    /// Loads and merges every not-yet-seen remote-meta blob, then notifies `Storage`/`Protector` of
+    /// the merged result via `set_remote_meta` -- but only if something new was actually merged,
+    /// unless `force_notify` is set (used by `Core::open`'s initial call, so implementations always
+    /// get told the current state even if it's empty).
     async fn read_remote_meta_(self: &Arc<Self>, force_notify: bool) -> Result<()> {
         let names = self
             .storage
@@ -516,6 +602,7 @@ where
         Ok(())
     }
 
+    /// The `CoreSubHandle::set_remote_meta_storage` implementation -- see there.
     async fn set_remote_meta_storage(
         self: &Arc<Self>,
         remote_meta: MVReg<VersionBytes, Uuid>,
@@ -527,6 +614,7 @@ where
         self.store_remote_meta().await
     }
 
+    /// The `CoreSubHandle::set_remote_meta_protector` implementation -- see there.
     async fn set_remote_meta_protector(
         self: &Arc<Self>,
         remote_meta: MVReg<VersionBytes, Uuid>,
@@ -538,6 +626,9 @@ where
         self.store_remote_meta().await
     }
 
+    /// Serializes the current merged `remote_meta` and writes it as a new immutable blob, then
+    /// removes every previously-written remote-meta blob from this device (they're all superseded
+    /// by the one just written, which already reflects everything they contained).
     async fn store_remote_meta(self: &Arc<Self>) -> Result<()> {
         let vbox = self.data.try_with(|data| {
             let bytes = rmp_serde::to_vec_named(&data.remote_meta)?;
@@ -558,50 +649,76 @@ where
     }
 }
 
+/// Arguments to [`Core::open`].
 pub struct OpenOptions<ST, P> {
+    /// The `Storage` implementation to use.
     pub storage: ST,
+    /// The `Protector` implementation to use.
     pub protector: P,
+    /// Whether to create local meta (and thus a new device identity) if none exists yet, instead of
+    /// failing.
     pub create: bool,
+    /// The sorted set of inner-payload data versions this `Core` can read. Must include
+    /// `current_data_version`.
     pub supported_data_versions: Vec<Uuid>,
+    /// The inner-payload data version newly-written state/op payloads are stamped with.
     pub current_data_version: Uuid,
 }
 
+/// This device's own local metadata: never synced, loaded/created once by `Core::open` and kept in
+/// `CoreMutData::local_meta` for the rest of the process's lifetime.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LocalMeta {
+    /// This device's randomly-generated actor id, used to attribute every op it creates.
     pub(crate) local_actor_id: Uuid,
 }
 
+/// The full persisted/synced unit of CRDT state: the state itself plus the per-actor op versions
+/// already folded into it, so a reader knows which ops it still needs to separately apply on top of
+/// a loaded snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StateWrapper<S> {
+    /// For each actor, the version of the next op from that actor not yet reflected in `state`.
     pub(crate) next_op_versions: VClock<Uuid>,
+    /// The CRDT state itself.
     pub(crate) state: S,
 }
 
+/// A small `CvRDT` composed of two `MVReg`s, used to let `Storage`/`Protector` gossip their own
+/// out-of-band metadata between devices the same way the app data syncs.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct RemoteMeta {
+    /// The storage implementation's slice, round-tripped through `Storage::set_remote_meta`.
     storage: MVReg<VersionBytes, Uuid>,
+    /// The protector implementation's slice, round-tripped through `Protector::set_remote_meta`.
     protector: MVReg<VersionBytes, Uuid>,
 }
 
 impl CvRDT for RemoteMeta {
+    /// Merging two `RemoteMeta`s can never fail -- each field is itself an infallible `MVReg` merge.
     type Validation = Infallible;
 
+    /// Always succeeds; see `Validation`.
     fn validate_merge(&self, _other: &Self) -> Result<(), Infallible> {
         Ok(())
     }
 
+    /// Merges each field's `MVReg` independently.
     fn merge(&mut self, other: Self) {
         self.storage.merge(other.storage);
         self.protector.merge(other.protector);
     }
 }
 
+/// This device's own actor/session info, returned by `Core::info`/`CoreSubHandle::info`.
 #[derive(Debug, Clone)]
 pub struct Info {
+    /// This device's actor id (same as `LocalMeta::local_actor_id`).
     actor: Uuid,
 }
 
 impl Info {
+    /// This device's actor id.
     pub fn actor(&self) -> Uuid {
         self.actor
     }
