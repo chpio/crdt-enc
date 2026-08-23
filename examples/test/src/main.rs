@@ -4,10 +4,16 @@ use ::crdt_enc_gpgme::KeyHandler;
 use ::crdt_enc_tokio::Storage;
 use ::uuid::Uuid;
 
+/// The inner-payload data version this example's `MVReg<u64, Uuid>` state is stamped with.
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0xaadfd5a6_6e19_4b24_a802_4fa27c72f20c);
 
+/// The set of inner-payload data versions this example can read.
 const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 
+/// Wires the tokio filesystem storage and an `EnvelopeProtector<KeyHandler>` together against a
+/// `MVReg<u64, Uuid>` state, reading/writing under `./data/local` and `./data/remote`, then
+/// increments the register by one and applies that as a new op -- a minimal reference for how the
+/// pieces fit together end to end.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let data_dir = std::fs::canonicalize("./").unwrap().join("data");
