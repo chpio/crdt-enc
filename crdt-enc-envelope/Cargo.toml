@@ -17,6 +17,7 @@ dyn-clone = "1"
 agnostik = "0.2"
 phf = { version = "0.14", features = ["macros"] }
 chacha20poly1305 = "0.11"
+zeroize = "1.9"
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"

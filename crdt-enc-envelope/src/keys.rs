@@ -1,7 +1,8 @@
+use crate::at_rest::AtRest;
 use ::anyhow::Result;
-use ::crdt_enc::utils::{VersionBytes, VersionBytesRef};
+use ::crdt_enc::utils::VersionBytes;
 use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};
-use ::serde::{Deserialize, Serialize};
+use ::serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ::std::{
     borrow::Borrow,
     cmp::{Eq, Ord, Ordering, PartialEq},
@@ -80,13 +81,14 @@ impl Keys {
 }
 
 /// One content-encryption key: a random id (stable across rotations, used to tag encrypted content
-/// so it stays decryptable after a later rotation) plus the raw key bytes.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// so it stays decryptable after a later rotation) plus the raw key bytes -- kept encrypted at rest
+/// under `REST_KEY` while held in memory, decrypted only for the brief moment `Key::key` is called.
+#[derive(Clone, Debug)]
 pub struct Key {
     /// This key's id.
     id: Uuid,
-    /// The raw key bytes, version-tagged.
-    key: VersionBytes,
+    /// The key bytes, encrypted under `REST_KEY`.
+    key: AtRestKey,
 }
 
 impl Key {
@@ -97,7 +99,10 @@ impl Key {
 
     /// Creates a key with an explicit id, e.g. when reconstructing one that already has one.
     pub fn new_with_id(id: Uuid, key: VersionBytes) -> Key {
-        Key { id, key }
+        Key {
+            id,
+            key: AtRestKey::encrypt(key),
+        }
     }
 
     /// This key's id.
@@ -105,9 +110,68 @@ impl Key {
         self.id
     }
 
-    /// The raw key bytes.
-    pub fn key(&self) -> VersionBytesRef<'_> {
-        self.key.as_version_bytes_ref()
+    /// The raw key bytes, decrypted from their at-rest encryption.
+    pub fn key(&self) -> VersionBytes {
+        self.key.decrypt()
+    }
+}
+
+/// Wire-format mirror of `Key`, used only by `Key`'s hand-written `Serialize`/`Deserialize` --
+/// `Key`'s own fields hold the at-rest-encrypted form, which is process-local and must never be
+/// what's actually sent over the wire/stored in the synced `Keys` CRDT.
+#[derive(Serialize, Deserialize)]
+struct KeyWire {
+    /// See `Key::id`.
+    id: Uuid,
+    /// See `Key::key`.
+    key: VersionBytes,
+}
+
+impl Serialize for Key {
+    /// Decrypts the at-rest-encrypted key material and serializes it via `KeyWire`.
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        KeyWire {
+            id: self.id,
+            key: self.key(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Key {
+    /// Deserializes via `KeyWire`, then re-encrypts the key material at rest.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let wire = KeyWire::deserialize(deserializer)?;
+        Ok(Key::new_with_id(wire.id, wire.key))
+    }
+}
+
+/// A content-encryption key's raw bytes, encrypted at rest via the generic [`AtRest`] primitive.
+/// The version tag itself isn't sensitive, so it's kept alongside in the clear rather than as part
+/// of the protected payload.
+#[derive(Clone, Debug)]
+struct AtRestKey {
+    /// The plaintext key's version tag.
+    version: Uuid,
+    /// The raw key bytes, encrypted at rest.
+    content: AtRest,
+}
+
+impl AtRestKey {
+    /// Encrypts `key`'s content at rest, keeping its version tag alongside in the clear.
+    fn encrypt(key: VersionBytes) -> AtRestKey {
+        let version = key.version();
+        let content: Vec<u8> = key.into();
+
+        AtRestKey {
+            version,
+            content: AtRest::encrypt(content),
+        }
+    }
+
+    /// Reverses `encrypt`.
+    fn decrypt(&self) -> VersionBytes {
+        VersionBytes::new(self.version, self.content.decrypt().as_bytes().to_vec())
     }
 }
 

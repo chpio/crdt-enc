@@ -24,6 +24,9 @@ use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug, future::Future, mem, pin::Pin};
 use ::uuid::Uuid;
 
+/// [`at_rest::AtRest`]: a reusable, generic "encrypt this secret while it sits idle in memory"
+/// primitive.
+pub mod at_rest;
 /// The `Keys`/`Key` CRDT types backing the rotating content-encryption key, private to this crate --
 /// see `EnvelopeProtector`'s use of them.
 mod keys;

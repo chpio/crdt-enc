@@ -8,7 +8,7 @@ use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::LockBox;
-use ::crdt_enc_envelope::KeySlotProtector;
+use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, collections::HashMap};
@@ -21,8 +21,9 @@ const NONCE_LEN: usize = 24;
 /// The byte length of an Argon2-derived key-encryption key (XChaCha20Poly1305's key size).
 const KEK_LEN: usize = 32;
 
-/// An Argon2-derived key-encryption key, zeroized on drop.
-type Kek = Zeroizing<[u8; KEK_LEN]>;
+/// An Argon2-derived key-encryption key, encrypted at rest -- it directly protects the actual
+/// content-encryption key, so it's just as sensitive as the password it's derived from.
+type Kek = AtRest;
 
 /// A [`KeySlotProtector`] that wraps/unwraps a key with a password: an Argon2id-derived key
 /// encrypts it with XChaCha20Poly1305. Every wrapped blob carries its own salt (and the Argon2
@@ -32,16 +33,16 @@ type Kek = Zeroizing<[u8; KEK_LEN]>;
 /// `Core::read_remote_meta()` call), so it only runs again for a salt this instance hasn't seen
 /// before.
 ///
-/// The cleartext password is kept in memory (behind `Zeroizing`, so it's wiped on drop) for this
-/// value's entire lifetime, not just briefly at construction: `unwrap_key` must be able to derive
-/// the key for a salt it's never seen before at any time (e.g. a new device joining sync later
-/// with its own independently-bootstrapped entry), so there's no point at which it's safe to
-/// assume the password is no longer needed. See `todo.md` for ideas on reducing this exposure.
+/// The password is kept resident (encrypted at rest via [`AtRest`], decrypted only for the
+/// brief moment an Argon2 derivation actually needs it) for this value's entire lifetime, not just
+/// briefly at construction: `unwrap_key` must be able to derive the key for a salt it's never seen
+/// before at any time (e.g. a new device joining sync later with its own independently-bootstrapped
+/// entry), so there's no point at which it's safe to assume the password is no longer needed. See
+/// `todo.md` for ideas on reducing this exposure further.
 #[derive(Debug)]
 pub struct PasswordKeySlot {
-    /// The cleartext password, kept resident for this value's entire lifetime -- see the struct
-    /// doc comment.
-    password: Zeroizing<String>,
+    /// The password, encrypted at rest -- see the struct doc comment.
+    password: AtRest,
     /// Argon2id memory cost (KiB) for keys this instance derives.
     m_cost: u32,
     /// Argon2id time cost (iterations) for keys this instance derives.
@@ -56,22 +57,21 @@ pub struct PasswordKeySlot {
 
 impl PasswordKeySlot {
     /// Creates a `PasswordKeySlot` using the OWASP-recommended minimum Argon2id parameters (19456
-    /// KiB memory cost, 2 iterations, parallelism 1).
-    pub fn new(password: impl Into<String>) -> PasswordKeySlot {
+    /// KiB memory cost, 2 iterations, parallelism 1). Takes the password as an already-encrypted
+    /// [`AtRest`] rather than a plaintext string -- encrypt it at rest as early as possible
+    /// at the call site (e.g. right after reading it from stdin/a prompt), so it's never a plain
+    /// `String` inside this crate at all.
+    pub fn new(password: AtRest) -> PasswordKeySlot {
         Self::with_params(password, 19_456, 2, 1)
     }
 
     /// Creates a `PasswordKeySlot` with explicit Argon2id parameters (memory cost in KiB, time
     /// cost, parallelism). The chosen parameters are stored alongside each wrapped key, so
-    /// changing them later doesn't break unwrapping keys wrapped with the old parameters.
-    pub fn with_params(
-        password: impl Into<String>,
-        m_cost: u32,
-        t_cost: u32,
-        p_cost: u32,
-    ) -> PasswordKeySlot {
+    /// changing them later doesn't break unwrapping keys wrapped with the old parameters. See
+    /// [`Self::new`] on why `password` is an already-encrypted [`AtRest`].
+    pub fn with_params(password: AtRest, m_cost: u32, t_cost: u32, p_cost: u32) -> PasswordKeySlot {
         PasswordKeySlot {
-            password: Zeroizing::new(password.into()),
+            password,
             m_cost,
             t_cost,
             p_cost,
@@ -137,7 +137,10 @@ impl KeySlotProtector for PasswordKeySlot {
                 .try_fill_bytes(&mut nonce)
                 .context("Unable to get random data for nonce")?;
 
-            let aead = XChaCha20Poly1305::new(&AeadKey::from(*kek));
+            let aead = XChaCha20Poly1305::new(
+                &AeadKey::try_from(kek.decrypt().as_bytes())
+                    .expect("kek is always KEK_LEN bytes by construction"),
+            );
             let ciphertext = aead
                 .encrypt(&XNonce::from(nonce), key.as_ref())
                 .context("encryption failed")?;
@@ -193,7 +196,10 @@ impl KeySlotProtector for PasswordKeySlot {
         let ciphertext = envelope.ciphertext.clone().into_owned();
 
         spawn_blocking(move || {
-            let aead = XChaCha20Poly1305::new(&AeadKey::from(*kek));
+            let aead = XChaCha20Poly1305::new(
+                &AeadKey::try_from(kek.decrypt().as_bytes())
+                    .expect("kek is always KEK_LEN bytes by construction"),
+            );
             let xnonce = XNonce::from(nonce);
             aead.decrypt(&xnonce, ciphertext.as_ref())
                 .map_err(|_| Error::msg("decryption failed (wrong password or tampered data)"))
@@ -202,18 +208,26 @@ impl KeySlotProtector for PasswordKeySlot {
     }
 }
 
-/// Derives a `KEK_LEN`-byte key-encryption key from `password` and `salt` via Argon2id.
-fn derive_kek(password: &str, salt: &[u8], m_cost: u32, t_cost: u32, p_cost: u32) -> Result<Kek> {
+/// Derives a `KEK_LEN`-byte key-encryption key from `password` and `salt` via Argon2id. Decrypts
+/// `password` itself, right before actually hashing it, rather than requiring callers to have
+/// already exposed it.
+fn derive_kek(
+    password: &AtRest,
+    salt: &[u8],
+    m_cost: u32,
+    t_cost: u32,
+    p_cost: u32,
+) -> Result<Kek> {
     let params = Params::new(m_cost, t_cost, p_cost, Some(KEK_LEN))
         .map_err(|err| Error::msg(format!("invalid argon2 params: {err}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut kek = Zeroizing::new([0u8; KEK_LEN]);
     argon2
-        .hash_password_into(password.as_bytes(), salt, kek.as_mut())
+        .hash_password_into(password.decrypt().as_bytes(), salt, kek.as_mut())
         .map_err(|err| Error::msg(format!("argon2 hashing failed: {err}")))?;
 
-    Ok(kek)
+    Ok(AtRest::encrypt(kek.as_ref()))
 }
 
 /// A self-describing wrapped key: everything needed to re-derive the same key-encryption key and
@@ -250,7 +264,7 @@ mod tests {
 
     fn fast_key_slot(password: &str) -> PasswordKeySlot {
         // tiny Argon2 params so tests run fast; production code should use `new` (OWASP defaults)
-        PasswordKeySlot::with_params(password, 8, 1, 1)
+        PasswordKeySlot::with_params(AtRest::encrypt(password), 8, 1, 1)
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 use ::anyhow::Result;
 use ::crdt_enc::OpenOptions;
-use ::crdt_enc_envelope::EnvelopeProtector;
+use ::crdt_enc_envelope::{EnvelopeProtector, at_rest::AtRest};
 use ::crdt_enc_password::PasswordKeySlot;
 use ::crdt_enc_tokio::Storage;
 use ::crdts::MVReg;
@@ -11,7 +11,7 @@ const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 
 // tiny Argon2 params so tests run fast; production code should use `PasswordKeySlot::new`
 fn fast_key_slot(password: &str) -> PasswordKeySlot {
-    PasswordKeySlot::with_params(password, 8, 1, 1)
+    PasswordKeySlot::with_params(AtRest::encrypt(password), 8, 1, 1)
 }
 
 /// Two independent `Core`s sharing a password via `PasswordKeySlot`: verifies device B can
