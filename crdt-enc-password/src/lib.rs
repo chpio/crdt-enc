@@ -21,14 +21,6 @@ const NONCE_LEN: usize = 24;
 /// The byte length of an Argon2-derived key-encryption key (XChaCha20Poly1305's key size).
 const KEK_LEN: usize = 32;
 
-/// OWASP-recommended Argon2id minimum parameters, used unless [`PasswordKeySlot::with_params`] is
-/// used to pick different ones.
-const DEFAULT_M_COST: u32 = 19_456;
-/// See `DEFAULT_M_COST`.
-const DEFAULT_T_COST: u32 = 2;
-/// See `DEFAULT_M_COST`.
-const DEFAULT_P_COST: u32 = 1;
-
 /// An Argon2-derived key-encryption key, zeroized on drop.
 type Kek = Zeroizing<[u8; KEK_LEN]>;
 
@@ -63,9 +55,10 @@ pub struct PasswordKeySlot {
 }
 
 impl PasswordKeySlot {
-    /// Creates a `PasswordKeySlot` using the OWASP-recommended minimum Argon2id parameters.
+    /// Creates a `PasswordKeySlot` using the OWASP-recommended minimum Argon2id parameters (19456
+    /// KiB memory cost, 2 iterations, parallelism 1).
     pub fn new(password: impl Into<String>) -> PasswordKeySlot {
-        Self::with_params(password, DEFAULT_M_COST, DEFAULT_T_COST, DEFAULT_P_COST)
+        Self::with_params(password, 19_456, 2, 1)
     }
 
     /// Creates a `PasswordKeySlot` with explicit Argon2id parameters (memory cost in KiB, time
