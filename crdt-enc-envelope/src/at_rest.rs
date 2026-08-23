@@ -38,8 +38,13 @@ static REST_KEY: LazyLock<[u8; AEAD_KEY_LEN]> = LazyLock::new(|| {
 pub struct AtRest {
     /// The random nonce this ciphertext was encrypted with.
     nonce: [u8; AEAD_NONCE_LEN],
-    /// The encrypted secret bytes.
-    ciphertext: Vec<u8>,
+    /// The encrypted secret bytes. Zeroized on drop too: while a *live* `AtRest` is no safer than
+    /// plaintext against a full memory dump (`REST_KEY` is permanently resident right alongside
+    /// it), an *already-dropped* one (e.g. an old KEK superseded after a salt change, or an old
+    /// `Key` superseded by rotation) would otherwise leave its ciphertext sitting in freed heap
+    /// memory indefinitely, combinable with `REST_KEY` (which never goes away) by a *later* memory
+    /// dump. Zeroizing on drop closes that gap for secrets that are supposed to already be gone.
+    ciphertext: Zeroizing<Vec<u8>>,
 }
 
 impl Debug for AtRest {
@@ -61,7 +66,10 @@ impl AtRest {
             .encrypt(&XNonce::from(nonce), plaintext.as_ref())
             .expect("encrypting at-rest secret failed");
 
-        AtRest { nonce, ciphertext }
+        AtRest {
+            nonce,
+            ciphertext: Zeroizing::new(ciphertext),
+        }
     }
 
     /// Reverses `encrypt`, returning the original plaintext bytes as [`Exposed`]. Only fails if
