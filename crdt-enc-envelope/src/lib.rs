@@ -1,3 +1,10 @@
+//! A [`crdt_enc::Protector`] implementing LUKS-style envelope encryption: content is protected
+//! directly with a random, rotatable content-encryption key managed by [`EnvelopeProtector`], while
+//! that one key is in turn protected by a swappable [`KeySlotProtector`] (e.g. a password or GPG
+//! recipients) -- so the key can be rotated, or the way it's protected changed, without
+//! re-encrypting any historical content.
+#![warn(missing_docs)]
+
 use crate::keys::{Key, Keys};
 use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
@@ -17,11 +24,14 @@ use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug, future::Future, mem, pin::Pin};
 use ::uuid::Uuid;
 
+/// The `Keys`/`Key` CRDT types backing the rotating content-encryption key, private to this crate --
+/// see `EnvelopeProtector`'s use of them.
 mod keys;
 
 /// version of the outer sync envelope holding the (wrapped) `Keys` CRDT
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0x_59b8c30c_f4b0_405b_acf1_9e2202665dbf);
 
+/// The set of `CURRENT_VERSION`-style outer sync-envelope versions this build can still read.
 static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
     // current
     0x_59b8c30c_f4b0_405b_acf1_9e2202665dbf_u128,
@@ -29,10 +39,12 @@ static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
 
 /// version tag for the raw content-encryption key bytes
 const KEY_VERSION: Uuid = Uuid::from_u128(0x_3bb60b03_00df_4c79_a199_f96031511d4d);
+/// The byte length of a raw content-encryption key (XChaCha20Poly1305's key size).
 const KEY_LEN: usize = 32;
 
 /// version of the XChaCha20Poly1305 content envelope
 const DATA_VERSION: Uuid = Uuid::from_u128(0x_ae6e17fd_8aa7_46c9_8797_89ecfbedbae9);
+/// The byte length of an XChaCha20Poly1305 nonce.
 const NONCE_LEN: usize = 24;
 
 /// Protects a single raw key blob (e.g. wraps it for one or more recipients, or encrypts it with a
@@ -52,10 +64,17 @@ where
     fn unwrap_key(&self, wrapped: &[u8]) -> impl Future<Output = Result<Vec<u8>>> + Send;
 }
 
+/// `EnvelopeProtector`'s mutable in-process state, guarded together so it's always mutated/read as
+/// one consistent snapshot.
 #[derive(Debug)]
 struct MutData {
+    /// The handle back into the owning `Core`, set once by `Protector::init`; `None` only before
+    /// that.
     core: Option<Box<dyn CoreSubHandle>>,
+    /// This device's merged view of the synced (wrapped) `Keys` CRDT, as raw registers -- decoded
+    /// into `keys` via `key_slot.unwrap_key`.
     remote_meta: MVReg<VersionBytes, Uuid>,
+    /// This device's merged, decoded view of every known content-encryption key.
     keys: Keys,
 }
 
@@ -265,6 +284,9 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
     }
 }
 
+/// Encrypts `clear_text` with `key` (XChaCha20Poly1305, random nonce) and wraps the result, tagged
+/// with `key_id`, in a versioned `EncBox` so `decrypt_content` can later look up the exact same key
+/// again. Validates `key`'s version/length first.
 async fn encrypt_content(
     key_id: Uuid,
     key: VersionBytesRef<'_>,
@@ -330,14 +352,21 @@ async fn decrypt_content(key: VersionBytesRef<'_>, enc_box: EncBox<'_>) -> Resul
     .await
 }
 
+/// One piece of content encrypted with one content-encryption key: which key (by id), the random
+/// nonce used, and the ciphertext. Wrapped in an outer `VersionBytesRef`/`DATA_VERSION` tag by
+/// `encrypt_content`/`decrypt_content`.
 #[derive(Serialize, Deserialize, Debug)]
 struct EncBox<'a> {
+    /// Which content-encryption key (by [`Key::id`]) `enc_data` was encrypted with -- looked up via
+    /// `Keys::get_key` on decrypt, so content stays readable across a key rotation.
     key_id: Uuid,
 
+    /// The random XChaCha20Poly1305 nonce used for this one encryption.
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
     nonce: Cow<'a, [u8]>,
 
+    /// The ciphertext.
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
     enc_data: Cow<'a, [u8]>,
