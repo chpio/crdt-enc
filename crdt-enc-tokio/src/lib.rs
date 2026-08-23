@@ -1,3 +1,7 @@
+//! A [`crdt_enc::storage::Storage`] backed by the local filesystem via Tokio. See [`Storage`] for
+//! the on-disk layout.
+#![warn(missing_docs)]
+
 use ::anyhow::{Context, Error, Result, ensure};
 use ::bytes::Buf;
 use ::crdt_enc::utils::{LockBox, VersionBytes, VersionBytesRef};
@@ -19,9 +23,17 @@ use ::tokio::{
 use ::tokio_stream::wrappers::ReadDirStream;
 use ::uuid::Uuid;
 
+/// A [`crdt_enc::storage::Storage`] backed by the local filesystem: `local_path` for device-local
+/// meta, and `remote_path` (e.g. a Syncthing-shared tree) for everything that gets synced --
+/// subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`. Every file is content-addressed
+/// (named by hash of its content, for meta/states) or by actor+version (for ops) and, once written,
+/// immutable -- files are only ever created or deleted, never modified in place.
 #[derive(Debug)]
 pub struct Storage {
+    /// Device-local metadata directory, exclusively locked for this process (see
+    /// `ensure_local_lock`) and never synced.
     local_path: PathBuf,
+    /// The synced tree (e.g. shared via Syncthing) holding `meta/`, `states/`, `ops/`.
     remote_path: PathBuf,
     /// `None` until `ensure_local_lock` acquires the process-exclusive lock on `local_path` (on
     /// first local-meta access); released automatically when this file handle is dropped
@@ -29,6 +41,8 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Creates a `Storage` for the given (must be absolute) local/remote directories. Doesn't touch
+    /// the filesystem yet -- directories are created lazily on first use.
     pub fn new(local_path: PathBuf, remote_path: PathBuf) -> Result<Storage> {
         ensure!(
             local_path.is_absolute(),
@@ -82,6 +96,7 @@ impl Storage {
 }
 
 impl crdt_enc::storage::Storage for Storage {
+    /// Reads `<local_path>/meta-data.msgpack`, if it exists.
     async fn load_local_meta(&self) -> Result<Option<VersionBytes>> {
         self.ensure_local_lock().await?;
 
@@ -99,6 +114,7 @@ impl crdt_enc::storage::Storage for Storage {
             .transpose()
     }
 
+    /// Overwrites `<local_path>/meta-data.msgpack`.
     async fn store_local_meta(&self, meta: VersionBytes) -> Result<()> {
         self.ensure_local_lock().await?;
 
@@ -110,6 +126,7 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(())
     }
 
+    /// Lists file names under `<remote_path>/meta/`.
     async fn list_remote_meta_names(&self) -> Result<Vec<String>> {
         let meta_dir = self.remote_path.join("meta");
         read_dir_optional_files(meta_dir)
@@ -127,6 +144,7 @@ impl crdt_enc::storage::Storage for Storage {
             .await
     }
 
+    /// Reads the given files under `<remote_path>/meta/`, up to 32 concurrently.
     async fn load_remote_metas(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("meta");
@@ -147,6 +165,8 @@ impl crdt_enc::storage::Storage for Storage {
         stream::iter(futs).buffer_unordered(32).try_collect().await
     }
 
+    /// Writes a new content-addressed file under `<remote_path>/meta/`, named by the hash of its
+    /// content, and returns that name.
     async fn store_remote_meta(&self, meta: VersionBytes) -> Result<String> {
         let meta_dir = self.remote_path.join("meta");
         write_content_addressible_file(&meta_dir, &meta.as_version_bytes_ref())
@@ -154,6 +174,8 @@ impl crdt_enc::storage::Storage for Storage {
             .context("failed writing remote meta file")
     }
 
+    /// Deletes the given files under `<remote_path>/meta/`, up to 32 concurrently; an
+    /// already-missing file is not an error.
     async fn remove_remote_metas(&self, names: Vec<String>) -> Result<()> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("meta");
@@ -170,6 +192,7 @@ impl crdt_enc::storage::Storage for Storage {
         stream::iter(futs).buffer_unordered(32).try_collect().await
     }
 
+    /// Lists file names under `<remote_path>/states/`.
     async fn list_state_names(&self) -> Result<Vec<String>> {
         let states_dir = self.remote_path.join("states");
         read_dir_optional_files(states_dir)
@@ -187,6 +210,7 @@ impl crdt_enc::storage::Storage for Storage {
             .await
     }
 
+    /// Reads the given files under `<remote_path>/states/`, up to 32 concurrently.
     async fn load_states(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("states");
@@ -206,6 +230,8 @@ impl crdt_enc::storage::Storage for Storage {
         stream::iter(futs).buffer_unordered(32).try_collect().await
     }
 
+    /// Writes a new content-addressed file under `<remote_path>/states/`, named by the hash of its
+    /// content, and returns that name.
     async fn store_state(&self, bytes: VersionBytes) -> Result<String> {
         let states_dir = self.remote_path.join("states");
         write_content_addressible_file(&states_dir, &bytes.as_version_bytes_ref())
@@ -213,6 +239,9 @@ impl crdt_enc::storage::Storage for Storage {
             .context("failed writing state file")
     }
 
+    /// Deletes the given files under `<remote_path>/states/`, up to 32 concurrently; an
+    /// already-missing file is not an error. Returns `names` unchanged (echoed back for the caller's
+    /// bookkeeping).
     async fn remove_states(&self, names: Vec<String>) -> Result<Vec<String>> {
         let futs = names
             .iter()
@@ -236,6 +265,7 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(names)
     }
 
+    /// Lists the actor-uuid-named subdirectories under `<remote_path>/ops/`.
     async fn list_op_actors(&self) -> Result<Vec<Uuid>> {
         let ops_dir = self.remote_path.join("ops");
         read_dir_optional_dirs(ops_dir)
@@ -254,10 +284,15 @@ impl crdt_enc::storage::Storage for Storage {
             .await
     }
 
+    /// For each `(actor, first_version)`, reads `<remote_path>/ops/<actor>/<version>` for
+    /// consecutively increasing versions starting at `first_version`, stopping at the first missing
+    /// version -- relies on op files being written in strictly ascending, contiguous order per
+    /// actor (`store_ops`'s contract), so a gap means "no more ops yet", not "a hole to skip over".
     async fn load_ops(
         &self,
         actor_first_versions: Vec<(Uuid, u64)>,
     ) -> Result<Vec<(Uuid, u64, VersionBytes)>> {
+        /// Reads one op file, if it exists.
         async fn get_entry(
             path: &Path,
             actor: Uuid,
@@ -312,6 +347,8 @@ impl crdt_enc::storage::Storage for Storage {
             .await
     }
 
+    /// Writes `<remote_path>/ops/<actor>/<version>` as a new file, failing if it already exists
+    /// (`write_new_file`) -- callers must supply strictly ascending, contiguous versions per actor.
     async fn store_ops(&self, actor: Uuid, version: u64, bytes: VersionBytes) -> Result<()> {
         let mut path = self.remote_path.join("ops");
         path.push(actor.to_string());
@@ -327,6 +364,8 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(())
     }
 
+    /// Deletes the given `<remote_path>/ops/<actor>/<version>` files, up to 32 concurrently; an
+    /// already-missing file is not an error.
     async fn remove_ops(&self, names: Vec<(Uuid, u64)>) -> Result<()> {
         let futs = names.into_iter().map(|(actor, version)| {
             let mut path = self.remote_path.join("ops");
@@ -350,14 +389,20 @@ impl crdt_enc::storage::Storage for Storage {
     }
 }
 
+/// Writes `buf` to `path`, creating or truncating it if it already exists.
 async fn write_file(path: &Path, buf: impl Buf) -> io::Result<()> {
     write_file_inner(path, buf, false).await
 }
 
+/// Writes `buf` to `path`, failing if `path` already exists (for content that must never be
+/// silently overwritten, e.g. ops).
 async fn write_new_file(path: &Path, buf: impl Buf) -> io::Result<()> {
     write_file_inner(path, buf, true).await
 }
 
+/// Shared implementation behind `write_file`/`write_new_file`: opens `path` (in create-new or
+/// create-or-truncate mode per `create_new`), writes `buf`, then flushes and fsyncs before
+/// returning.
 async fn write_file_inner(path: &Path, mut buf: impl Buf, create_new: bool) -> io::Result<()> {
     let mut open_options = fs::OpenOptions::new();
     if create_new {
@@ -380,14 +425,19 @@ async fn write_file_inner(path: &Path, mut buf: impl Buf, create_new: bool) -> i
     Ok(())
 }
 
+/// Like `read_dir_optional`, but yields only subdirectory entries.
 fn read_dir_optional_dirs(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> + 'static {
     read_dir_optional_filter_types(path, false)
 }
 
+/// Like `read_dir_optional`, but yields only regular-file entries.
 fn read_dir_optional_files(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> + 'static {
     read_dir_optional_filter_types(path, true)
 }
 
+/// Shared implementation behind `read_dir_optional_dirs`/`read_dir_optional_files`: lists `path`
+/// (treating a missing directory as empty, via `read_dir_optional`) and filters to just files or
+/// just directories depending on `is_file`.
 fn read_dir_optional_filter_types(
     path: PathBuf,
     is_file: bool,
@@ -408,6 +458,8 @@ fn read_dir_optional_filter_types(
         .try_filter_map(|res| async move { Ok(res) })
 }
 
+/// Lists `path`'s entries as a stream, treating a missing directory as an empty listing rather than
+/// an error (every other I/O error still propagates).
 fn read_dir_optional(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> + 'static {
     async move {
         match fs::read_dir(&path).await {
@@ -427,6 +479,8 @@ fn read_dir_optional(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> 
     .try_flatten_stream()
 }
 
+/// Reads `path`'s full content, treating a missing file as `None` rather than an error (every other
+/// I/O error still propagates).
 async fn read_file_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::read(&path).await {
         Ok(bytes) => Ok(Some(bytes)),
@@ -435,6 +489,9 @@ async fn read_file_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     }
 }
 
+/// Writes `bytes` as a new immutable file under `dir_path`, named by the base32 encoding of its
+/// SHA3-256 hash (so writing the same content twice is naturally idempotent), and returns that
+/// name.
 async fn write_content_addressible_file(
     dir_path: &Path,
     bytes: &VersionBytesRef<'_>,
@@ -466,6 +523,8 @@ async fn write_content_addressible_file(
     Ok(block_id)
 }
 
+/// Deletes `path`, treating it already being missing as success rather than an error (every other
+/// I/O error still propagates).
 async fn remove_file_optional(path: &Path) -> Result<()> {
     match fs::remove_file(path).await {
         Ok(()) => Ok(()),
