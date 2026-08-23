@@ -40,15 +40,9 @@ pub struct PasswordKeySlot {
     m_cost: u32,
     t_cost: u32,
     p_cost: u32,
-    /// This instance's own (salt, derived key) for `wrap_key`, decided lazily once (preferring an
-    /// already-known salt from `unwrap_cache` over minting a fresh one, see `own_salt_kek`) and
-    /// reused for the rest of its lifetime — there's no security benefit to a fresh salt per wrap
-    /// here (the AEAD's random nonce already makes reusing one key across many messages safe),
-    /// and a fresh salt would mean re-running Argon2 on every wrap.
-    own: LockBox<Option<(Vec<u8>, Kek)>>,
     /// Derived keys seen so far, keyed by salt, for `unwrap_key` -- and, via `own_salt_kek`, also
-    /// the source `wrap_key` prefers to converge on a single shared salt across devices instead
-    /// of each independently minting its own.
+    /// the source `wrap_key` uses to converge on a single shared salt across devices instead of
+    /// each independently minting its own.
     unwrap_cache: LockBox<HashMap<Vec<u8>, Kek>>,
 }
 
@@ -72,35 +66,29 @@ impl PasswordKeySlot {
             m_cost,
             t_cost,
             p_cost,
-            own: LockBox::new(None),
             unwrap_cache: LockBox::new(HashMap::new()),
         }
     }
 
-    /// Returns this instance's own (salt, derived key) pair for `wrap_key`, deciding and caching
-    /// one (in `own`) on first use. Prefers reusing the lexicographically smallest salt already
-    /// known via `unwrap_cache` (e.g. from decoding another device's entry during the
-    /// `set_remote_meta` merge that precedes this call, same min-by-id tiebreak philosophy as
-    /// `Keys::latest_key()`) over minting a fresh one -- lets devices converge on one shared salt
-    /// instead of each picking their own, so a device that already knows the canonical salt
-    /// doesn't trigger an extra Argon2 run the next time it needs to wrap something itself (e.g.
-    /// a rotation). Only mints a genuinely fresh salt if none is known yet (true first-ever
-    /// bootstrap). Not revisited after the first call, even if a smaller salt becomes known
-    /// later -- unlike `Keys::latest_key()`, this is a one-time decision, not recomputed every
-    /// call; in the rare case of two truly concurrent first-time bootstraps, each side may freeze
-    /// on its own salt rather than converging, which is an accepted trade-off for simplicity.
+    /// Returns the (salt, derived key) pair `wrap_key` should use: the lexicographically smallest
+    /// salt already known via `unwrap_cache` (e.g. from decoding another device's entry during
+    /// the `set_remote_meta` merge that precedes this call, same min-by-id tiebreak philosophy as
+    /// `Keys::latest_key()`), so devices converge on one shared salt instead of each picking their
+    /// own. Only mints a genuinely fresh salt if none is known yet (true first-ever bootstrap).
+    ///
+    /// Recomputed on every call rather than cached: since every derived key is immediately
+    /// inserted into `unwrap_cache`, this only costs an Argon2 run the very first time (or if a
+    /// still-smaller salt from another device shows up later, which is strictly an improvement,
+    /// not a regression) -- there's no cheaper alternative to buy by freezing the decision, since
+    /// the cleartext password already has to stay resident for `unwrap_key`'s sake regardless (see
+    /// the struct doc comment).
     async fn own_salt_kek(&self) -> Result<(Vec<u8>, Kek)> {
-        if let Some(pair) = self.own.with(|own| own.clone()) {
-            return Ok(pair);
-        }
-
         if let Some(pair) = self.unwrap_cache.with(|cache| {
             cache
                 .iter()
                 .min_by(|a, b| a.0.cmp(b.0))
                 .map(|(salt, kek)| (salt.clone(), kek.clone()))
         }) {
-            self.own.with(|own| *own = Some(pair.clone()));
             return Ok(pair);
         }
 
@@ -117,8 +105,6 @@ impl PasswordKeySlot {
         })
         .await?;
 
-        self.own
-            .with(|own| *own = Some((salt.clone(), kek.clone())));
         self.unwrap_cache
             .with(|cache| cache.insert(salt.clone(), kek.clone()));
 
