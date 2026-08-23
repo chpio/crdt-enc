@@ -167,7 +167,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             .data
             .with(|data| data.keys.latest_key())
             .context("no latest key")?;
-        encrypt_content(key.id(), key.key(), clear_text).await
+        encrypt_content(&key, clear_text).await
     }
 
     /// Reverses `encrypt`. Looks up the specific key the ciphertext was tagged with (not
@@ -187,7 +187,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             .with(|data| data.keys.get_key(enc_box.key_id))
             .with_context(|| format!("no key with id {}", enc_box.key_id))?;
 
-        decrypt_content(key.key(), enc_box).await
+        decrypt_content(&key, enc_box).await
     }
 }
 
@@ -285,16 +285,15 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
 }
 
 /// Encrypts `clear_text` with `key` (XChaCha20Poly1305, random nonce) and wraps the result, tagged
-/// with `key_id`, in a versioned `EncBox` so `decrypt_content` can later look up the exact same key
-/// again. Validates `key`'s version/length first.
-async fn encrypt_content(
-    key_id: Uuid,
-    key: VersionBytesRef<'_>,
-    clear_text: Vec<u8>,
-) -> Result<Vec<u8>> {
-    key.ensure_version(KEY_VERSION)
+/// with `key`'s id, in a versioned `EncBox` so `decrypt_content` can later look up the exact same
+/// key again. Validates `key`'s version/length first.
+async fn encrypt_content(key: &Key, clear_text: Vec<u8>) -> Result<Vec<u8>> {
+    let key_id = key.id();
+    key.key()
+        .ensure_version(KEY_VERSION)
         .context("not matching key version")?;
     let key: [u8; KEY_LEN] = key
+        .key()
         .as_ref()
         .try_into()
         .map_err(|_| Error::msg("Invalid key length"))?;
@@ -326,10 +325,12 @@ async fn encrypt_content(
 
 /// Decrypts an already-parsed [`EncBox`] with `key` (which the caller has already looked up via
 /// the box's `key_id`).
-async fn decrypt_content(key: VersionBytesRef<'_>, enc_box: EncBox<'_>) -> Result<Vec<u8>> {
-    key.ensure_version(KEY_VERSION)
+async fn decrypt_content(key: &Key, enc_box: EncBox<'_>) -> Result<Vec<u8>> {
+    key.key()
+        .ensure_version(KEY_VERSION)
         .context("not matching key version")?;
     let key: [u8; KEY_LEN] = key
+        .key()
         .as_ref()
         .try_into()
         .map_err(|_| Error::msg("Invalid key length"))?;
