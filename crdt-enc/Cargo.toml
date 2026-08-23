@@ -15,7 +15,7 @@ thiserror = "2"
 futures = "0.3"
 dyn-clone = "1"
 bytes = "1"
-phf = {version = "0.13", features = ["macros"]}
+phf = {version = "0.14", features = ["macros"]}
 
 [dependencies.uuid]
 version = "1"

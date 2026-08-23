@@ -294,21 +294,20 @@ async fn encrypt_content(
 ) -> Result<Vec<u8>> {
     key.ensure_version(KEY_VERSION)
         .context("not matching key version")?;
-    if key.as_ref().len() != KEY_LEN {
-        return Err(Error::msg("Invalid key length"));
-    }
-    let key = key.as_ref().to_vec();
+    let key: [u8; KEY_LEN] = key
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::msg("Invalid key length"))?;
 
     spawn_blocking(move || {
-        let aead_key = AeadKey::from_slice(&key);
-        let aead = XChaCha20Poly1305::new(aead_key);
+        let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
         let mut nonce = [0u8; NONCE_LEN];
         rng()
             .try_fill_bytes(&mut nonce)
             .context("Unable to get random data for nonce")?;
-        let xnonce = XNonce::from_slice(&nonce);
+        let xnonce = XNonce::from(nonce);
         let enc_data = aead
-            .encrypt(xnonce, clear_text.as_ref())
+            .encrypt(&xnonce, clear_text.as_ref())
             .context("Encryption failed")?;
         let enc_box = EncBox {
             key_id,
@@ -330,22 +329,22 @@ async fn encrypt_content(
 async fn decrypt_content(key: VersionBytesRef<'_>, enc_box: EncBox<'_>) -> Result<Vec<u8>> {
     key.ensure_version(KEY_VERSION)
         .context("not matching key version")?;
-    if key.as_ref().len() != KEY_LEN {
-        return Err(Error::msg("Invalid key length"));
-    }
-    if enc_box.nonce.as_ref().len() != NONCE_LEN {
-        return Err(Error::msg("Invalid nonce length"));
-    }
-    let key = key.as_ref().to_vec();
-    let nonce = enc_box.nonce.into_owned();
+    let key: [u8; KEY_LEN] = key
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::msg("Invalid key length"))?;
+    let nonce: [u8; NONCE_LEN] = enc_box
+        .nonce
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::msg("Invalid nonce length"))?;
     let ciphertext = enc_box.enc_data.into_owned();
 
     spawn_blocking(move || {
-        let aead_key = AeadKey::from_slice(&key);
-        let aead = XChaCha20Poly1305::new(aead_key);
-        let xnonce = XNonce::from_slice(&nonce);
+        let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
+        let xnonce = XNonce::from(nonce);
         let clear_text = aead
-            .decrypt(xnonce, ciphertext.as_ref())
+            .decrypt(&xnonce, ciphertext.as_ref())
             .context("Decryption failed")?;
         Ok(clear_text)
     })

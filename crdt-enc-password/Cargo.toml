@@ -13,16 +13,13 @@ serde_bytes = "0.11"
 agnostik = "0.2"
 argon2 = "0.5"
 zeroize = "1.9"
+chacha20poly1305 = "0.11"
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"
 
 [dependencies.crdt-enc-envelope]
 path = "../crdt-enc-envelope"
-
-[dependencies.chacha20poly1305]
-version = "0.10"
-features = ["std"]
 
 [dev-dependencies.agnostik]
 version = "0.2"

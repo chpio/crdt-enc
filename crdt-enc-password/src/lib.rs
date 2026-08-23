@@ -137,9 +137,9 @@ impl KeySlotProtector for PasswordKeySlot {
                 .try_fill_bytes(&mut nonce)
                 .context("Unable to get random data for nonce")?;
 
-            let aead = XChaCha20Poly1305::new(AeadKey::from_slice(kek.as_ref()));
+            let aead = XChaCha20Poly1305::new(&AeadKey::from(*kek));
             let ciphertext = aead
-                .encrypt(XNonce::from_slice(&nonce), key.as_ref())
+                .encrypt(&XNonce::from(nonce), key.as_ref())
                 .context("encryption failed")?;
 
             let envelope = Envelope {
@@ -162,9 +162,11 @@ impl KeySlotProtector for PasswordKeySlot {
     async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
         let envelope: Envelope =
             rmp_serde::from_slice(wrapped).context("failed to parse password envelope")?;
-        if envelope.nonce.len() != NONCE_LEN {
-            return Err(Error::msg("invalid nonce length"));
-        }
+        let nonce: [u8; NONCE_LEN] = envelope
+            .nonce
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::msg("invalid nonce length"))?;
 
         let cached_kek = self
             .unwrap_cache
@@ -188,12 +190,12 @@ impl KeySlotProtector for PasswordKeySlot {
             }
         };
 
-        let nonce = envelope.nonce.clone().into_owned();
         let ciphertext = envelope.ciphertext.clone().into_owned();
 
         spawn_blocking(move || {
-            let aead = XChaCha20Poly1305::new(AeadKey::from_slice(kek.as_ref()));
-            aead.decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
+            let aead = XChaCha20Poly1305::new(&AeadKey::from(*kek));
+            let xnonce = XNonce::from(nonce);
+            aead.decrypt(&xnonce, ciphertext.as_ref())
                 .map_err(|_| Error::msg("decryption failed (wrong password or tampered data)"))
         })
         .await
