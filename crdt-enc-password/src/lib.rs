@@ -1,3 +1,8 @@
+//! A [`crdt_enc_envelope::KeySlotProtector`] that protects the content-encryption key with a
+//! password: an Argon2id-derived key encrypts it with XChaCha20Poly1305. See [`PasswordKeySlot`]
+//! for details.
+#![warn(missing_docs)]
+
 use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
@@ -9,16 +14,22 @@ use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, collections::HashMap};
 use ::zeroize::Zeroizing;
 
+/// The byte length of an Argon2 salt.
 const SALT_LEN: usize = 16;
+/// The byte length of an XChaCha20Poly1305 nonce.
 const NONCE_LEN: usize = 24;
+/// The byte length of an Argon2-derived key-encryption key (XChaCha20Poly1305's key size).
 const KEK_LEN: usize = 32;
 
 /// OWASP-recommended Argon2id minimum parameters, used unless [`PasswordKeySlot::with_params`] is
 /// used to pick different ones.
 const DEFAULT_M_COST: u32 = 19_456;
+/// See `DEFAULT_M_COST`.
 const DEFAULT_T_COST: u32 = 2;
+/// See `DEFAULT_M_COST`.
 const DEFAULT_P_COST: u32 = 1;
 
+/// An Argon2-derived key-encryption key, zeroized on drop.
 type Kek = Zeroizing<[u8; KEK_LEN]>;
 
 /// A [`KeySlotProtector`] that wraps/unwraps a key with a password: an Argon2id-derived key
@@ -36,9 +47,14 @@ type Kek = Zeroizing<[u8; KEK_LEN]>;
 /// assume the password is no longer needed. See `todo.md` for ideas on reducing this exposure.
 #[derive(Debug)]
 pub struct PasswordKeySlot {
+    /// The cleartext password, kept resident for this value's entire lifetime -- see the struct
+    /// doc comment.
     password: Zeroizing<String>,
+    /// Argon2id memory cost (KiB) for keys this instance derives.
     m_cost: u32,
+    /// Argon2id time cost (iterations) for keys this instance derives.
     t_cost: u32,
+    /// Argon2id parallelism for keys this instance derives.
     p_cost: u32,
     /// Derived keys seen so far, keyed by salt, for `unwrap_key` -- and, via `own_salt_kek`, also
     /// the source `wrap_key` uses to converge on a single shared salt across devices instead of
@@ -113,6 +129,9 @@ impl PasswordKeySlot {
 }
 
 impl KeySlotProtector for PasswordKeySlot {
+    /// Encrypts `key` with an Argon2id-derived key (see `own_salt_kek`) using XChaCha20Poly1305
+    /// with a fresh random nonce, and encodes the result -- salt, Argon2 parameters, nonce,
+    /// ciphertext -- as a self-describing `Envelope`.
     async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
@@ -144,6 +163,9 @@ impl KeySlotProtector for PasswordKeySlot {
         .await
     }
 
+    /// Parses `wrapped` as an `Envelope`, derives (or looks up in `unwrap_cache`) the key for its
+    /// salt/parameters, and decrypts it. Fails if the envelope can't be parsed, its nonce is the
+    /// wrong length, or decryption fails (wrong password or tampered data).
     async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
         let envelope: Envelope =
             rmp_serde::from_slice(wrapped).context("failed to parse password envelope")?;
@@ -185,6 +207,7 @@ impl KeySlotProtector for PasswordKeySlot {
     }
 }
 
+/// Derives a `KEK_LEN`-byte key-encryption key from `password` and `salt` via Argon2id.
 fn derive_kek(password: &str, salt: &[u8], m_cost: u32, t_cost: u32, p_cost: u32) -> Result<Kek> {
     let params = Params::new(m_cost, t_cost, p_cost, Some(KEK_LEN))
         .map_err(|err| Error::msg(format!("invalid argon2 params: {err}")))?;
@@ -198,20 +221,29 @@ fn derive_kek(password: &str, salt: &[u8], m_cost: u32, t_cost: u32, p_cost: u32
     Ok(kek)
 }
 
+/// A self-describing wrapped key: everything needed to re-derive the same key-encryption key and
+/// decrypt the ciphertext travels alongside it, so no shared/pre-agreed salt between devices is
+/// needed.
 #[derive(Serialize, Deserialize, Debug)]
 struct Envelope<'a> {
+    /// The Argon2 salt used to derive the key-encryption key.
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
     salt: Cow<'a, [u8]>,
 
+    /// The Argon2id memory cost used.
     m_cost: u32,
+    /// The Argon2id time cost used.
     t_cost: u32,
+    /// The Argon2id parallelism used.
     p_cost: u32,
 
+    /// The XChaCha20Poly1305 nonce used.
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
     nonce: Cow<'a, [u8]>,
 
+    /// The encrypted key bytes.
     #[serde(borrow)]
     #[serde(with = "serde_bytes")]
     ciphertext: Cow<'a, [u8]>,
