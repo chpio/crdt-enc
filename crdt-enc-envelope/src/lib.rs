@@ -311,7 +311,7 @@ async fn encrypt_content(
             .context("Encryption failed")?;
         let enc_box = EncBox {
             key_id,
-            nonce: Cow::Borrowed(nonce.as_ref()),
+            nonce,
             enc_data: Cow::Owned(enc_data),
         };
         let enc_box_bytes =
@@ -333,11 +333,7 @@ async fn decrypt_content(key: VersionBytesRef<'_>, enc_box: EncBox<'_>) -> Resul
         .as_ref()
         .try_into()
         .map_err(|_| Error::msg("Invalid key length"))?;
-    let nonce: [u8; NONCE_LEN] = enc_box
-        .nonce
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::msg("Invalid nonce length"))?;
+    let nonce = enc_box.nonce;
     let ciphertext = enc_box.enc_data.into_owned();
 
     spawn_blocking(move || {
@@ -361,9 +357,8 @@ struct EncBox<'a> {
     key_id: Uuid,
 
     /// The random XChaCha20Poly1305 nonce used for this one encryption.
-    #[serde(borrow)]
     #[serde(with = "serde_bytes")]
-    nonce: Cow<'a, [u8]>,
+    nonce: [u8; NONCE_LEN],
 
     /// The ciphertext.
     #[serde(borrow)]
