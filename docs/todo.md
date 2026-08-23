@@ -15,6 +15,17 @@
 * filter filenames in storage-tokio
 * ensure concurrently deleted files (between storage::list and storage::load) do not crash core
 * https://github.com/BurntSushi/quickcheck
+* crdt-enc-envelope::keys::Keys.keys (an Orswot<Key,Uuid>) grows unbounded and is never
+  compacted/garbage-collected -- by design, old keys stay around forever so content encrypted with
+  them (after a rotation) remains decryptable. Unlike the MVReg wrappers around it
+  (latest_key_id, remote_meta.protector), which do shrink back to a single value after a
+  conflict-resolving write (crdts::MVReg::apply really prunes dominated entries via Vec::retain,
+  not just a read-time interpretation), the Orswot itself has no such mechanism, so every rotation
+  ever performed permanently grows the serialized Keys payload. Core::compact() doesn't help --
+  Keys lives entirely inside the protector's own remote_meta, separate from the app-level CRDT
+  state that compact() snapshots. Would need something like: once every device is known to be able
+  to decrypt content with the latest key (or an app-level policy decides old keys are no longer
+  needed), prune superseded Key entries from the Orswot.
 * PasswordKeySlot must keep the password resident for its entire lifetime (encrypted at rest via
   `AtRest` since the crdt-enc-envelope::at_rest work, but still resident), because unwrap_key must
   be able to handle a not-yet-seen salt at any time (e.g. a new device joining sync later with its
