@@ -52,7 +52,7 @@ pub struct PasswordKeySlot {
     /// Derived keys seen so far, keyed by salt, for `unwrap_key` -- and, via `own_salt_kek`, also
     /// the source `wrap_key` uses to converge on a single shared salt across devices instead of
     /// each independently minting its own.
-    unwrap_cache: LockBox<HashMap<Vec<u8>, Kek>>,
+    unwrap_cache: LockBox<HashMap<[u8; SALT_LEN], Kek>>,
 }
 
 impl PasswordKeySlot {
@@ -91,12 +91,12 @@ impl PasswordKeySlot {
     /// not a regression) -- there's no cheaper alternative to buy by freezing the decision, since
     /// the cleartext password already has to stay resident for `unwrap_key`'s sake regardless (see
     /// the struct doc comment).
-    async fn own_salt_kek(&self) -> Result<(Vec<u8>, Kek)> {
+    async fn own_salt_kek(&self) -> Result<([u8; SALT_LEN], Kek)> {
         if let Some(pair) = self.unwrap_cache.with(|cache| {
             cache
                 .iter()
                 .min_by(|a, b| a.0.cmp(b.0))
-                .map(|(salt, kek)| (salt.clone(), kek.clone()))
+                .map(|(salt, kek)| (*salt, kek.clone()))
         }) {
             return Ok(pair);
         }
@@ -105,7 +105,7 @@ impl PasswordKeySlot {
         let (m_cost, t_cost, p_cost) = (self.m_cost, self.t_cost, self.p_cost);
 
         let (salt, kek) = spawn_blocking(move || {
-            let mut salt = vec![0u8; SALT_LEN];
+            let mut salt = [0u8; SALT_LEN];
             rng()
                 .try_fill_bytes(&mut salt)
                 .context("Unable to get random data for salt")?;
@@ -115,7 +115,7 @@ impl PasswordKeySlot {
         .await?;
 
         self.unwrap_cache
-            .with(|cache| cache.insert(salt.clone(), kek.clone()));
+            .with(|cache| cache.insert(salt, kek.clone()));
 
         Ok((salt, kek))
     }
@@ -146,11 +146,11 @@ impl KeySlotProtector for PasswordKeySlot {
                 .context("encryption failed")?;
 
             let envelope = Envelope {
-                salt: Cow::Owned(salt),
+                salt,
                 m_cost,
                 t_cost,
                 p_cost,
-                nonce: Cow::Borrowed(&nonce),
+                nonce,
                 ciphertext: Cow::Owned(ciphertext),
             };
 
@@ -165,21 +165,17 @@ impl KeySlotProtector for PasswordKeySlot {
     async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
         let envelope: Envelope =
             rmp_serde::from_slice(wrapped).context("failed to parse password envelope")?;
-        let nonce: [u8; NONCE_LEN] = envelope
-            .nonce
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::msg("invalid nonce length"))?;
+        let nonce = envelope.nonce;
 
         let cached_kek = self
             .unwrap_cache
-            .with(|cache| cache.get(envelope.salt.as_ref()).cloned());
+            .with(|cache| cache.get(&envelope.salt).cloned());
 
         let kek = match cached_kek {
             Some(kek) => kek,
             None => {
                 let password = self.password.clone();
-                let salt = envelope.salt.clone().into_owned();
+                let salt = envelope.salt;
                 let (m_cost, t_cost, p_cost) = (envelope.m_cost, envelope.t_cost, envelope.p_cost);
 
                 let kek =
@@ -187,7 +183,7 @@ impl KeySlotProtector for PasswordKeySlot {
                         .await?;
 
                 self.unwrap_cache
-                    .with(|cache| cache.insert(envelope.salt.clone().into_owned(), kek.clone()));
+                    .with(|cache| cache.insert(envelope.salt, kek.clone()));
 
                 kek
             }
@@ -236,9 +232,8 @@ fn derive_kek(
 #[derive(Serialize, Deserialize, Debug)]
 struct Envelope<'a> {
     /// The Argon2 salt used to derive the key-encryption key.
-    #[serde(borrow)]
     #[serde(with = "serde_bytes")]
-    salt: Cow<'a, [u8]>,
+    salt: [u8; SALT_LEN],
 
     /// The Argon2id memory cost used.
     m_cost: u32,
@@ -248,9 +243,8 @@ struct Envelope<'a> {
     p_cost: u32,
 
     /// The XChaCha20Poly1305 nonce used.
-    #[serde(borrow)]
     #[serde(with = "serde_bytes")]
-    nonce: Cow<'a, [u8]>,
+    nonce: [u8; NONCE_LEN],
 
     /// The encrypted key bytes.
     #[serde(borrow)]
