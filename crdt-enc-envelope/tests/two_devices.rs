@@ -11,8 +11,8 @@ const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 
 /// A `KeySlotProtector` that doesn't protect anything — good enough to exercise
 /// `EnvelopeProtector`'s key rotation/convergence logic without depending on a real
-/// implementation (e.g. `crdt-enc-gpgme`, which also needs the system `gpgme` library just to
-/// build, for no benefit here since its own wrapping is a no-op stub anyway).
+/// implementation (e.g. `crdt-enc-password`, which would add unrelated Argon2/password setup for
+/// no benefit here).
 #[derive(Debug)]
 struct NoopKeySlot;
 

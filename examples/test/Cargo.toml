@@ -8,7 +8,7 @@ edition = "2021"
 crdt-enc = {path="../../crdt-enc"}
 crdt-enc-tokio = {path="../../crdt-enc-tokio"}
 crdt-enc-envelope = {path="../../crdt-enc-envelope"}
-crdt-enc-gpgme = {path="../../crdt-enc-gpgme"}
+crdt-enc-password = {path="../../crdt-enc-password"}
 uuid = {version = "1", features = ["serde", "v4"]}
 crdts = "7"
 tokio = {version = "1", features = ["macros", "rt"]}

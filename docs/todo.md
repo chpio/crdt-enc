@@ -1,5 +1,7 @@
 * change crate names
-* switch pgp to https://crates.io/crates/sequoia-openpgp
+* implement a GPG/OpenPGP KeySlotProtector using https://crates.io/crates/sequoia-openpgp (the
+  earlier gpgme-based stub crate, crdt-enc-gpgme, was removed since it never had real
+  wrap_key/unwrap_key logic)
 * harden the Storage trait contract for load_ops -- document and test that it must return ops
   contiguously/strictly ascending per actor (currently only true by convention in crdt-enc-tokio)
 * queue & flush ops?

@@ -49,12 +49,9 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
   syncthing-shared tree, subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`). Locks
   `local_path` for exclusive use by this process (via `fs4`/`flock`, lazily on first local-meta access)
   so the same actor's local storage can't be opened by two processes at once.
-- [crdt-enc-gpgme/](crdt-enc-gpgme/) — a `KeySlotProtector` implementation intended to wrap the content
-  key for GPG/OpenPGP recipients (via `gpgme`); `wrap_key`/`unwrap_key` are still stubbed as TODOs, see
-  [crdt-enc-gpgme/src/lib.rs](crdt-enc-gpgme/src/lib.rs). Requires the system `gpgme` library to build.
 - [examples/test/](examples/test/) — a minimal binary wiring the tokio storage + an
-  `EnvelopeProtector<KeyHandler>` (gpgme's stub key-slot) together against a CRDT `MVReg<u64, Uuid>`
-  state, useful as the reference for how the pieces fit together end to end.
+  `EnvelopeProtector<PasswordKeySlot>` together against a CRDT `MVReg<u64, Uuid>` state, useful as the
+  reference for how the pieces fit together end to end.
 
 ## Core architecture (`crdt-enc/src/lib.rs`)
 
@@ -91,7 +88,7 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
 ## Common commands
 
 ```sh
-cargo build --workspace          # build everything (requires system gpgme library)
+cargo build --workspace          # build everything
 cargo check --workspace          # fast type-check
 cargo test --workspace           # run all tests
 cargo test -p crdt-enc           # test just the core crate
@@ -109,6 +106,5 @@ There is no CI config and no linter beyond `cargo fmt`/`cargo check` in this rep
 ## Notes on current state
 
 [docs/todo.md](docs/todo.md) tracks known rough edges the maintainer is aware of — check it before assuming an
-`unwrap()`, missing validation, or stubbed encryption (e.g. the TODO comments in
-[crdt-enc-gpgme/src/lib.rs](crdt-enc-gpgme/src/lib.rs)) is an oversight to silently fix rather than
+`unwrap()`, missing validation, or stubbed encryption is an oversight to silently fix rather than
 known, intentionally-deferred work.

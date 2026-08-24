@@ -5,7 +5,6 @@ resolver = "2"
 members = [
     "crdt-enc",
     "crdt-enc-envelope",
-    "crdt-enc-gpgme",
     "crdt-enc-password",
     "crdt-enc-tokio",
     "examples/*",

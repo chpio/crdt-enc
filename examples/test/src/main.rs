@@ -1,6 +1,6 @@
 use ::anyhow::Result;
-use ::crdt_enc_envelope::EnvelopeProtector;
-use ::crdt_enc_gpgme::KeyHandler;
+use ::crdt_enc_envelope::{at_rest::AtRest, EnvelopeProtector};
+use ::crdt_enc_password::PasswordKeySlot;
 use ::crdt_enc_tokio::Storage;
 use ::uuid::Uuid;
 
@@ -10,7 +10,7 @@ const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0xaadfd5a6_6e19_4b24_a802_4fa
 /// The set of inner-payload data versions this example can read.
 const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 
-/// Wires the tokio filesystem storage and an `EnvelopeProtector<KeyHandler>` together against a
+/// Wires the tokio filesystem storage and an `EnvelopeProtector<PasswordKeySlot>` together against a
 /// `MVReg<u64, Uuid>` state, reading/writing under `./data/local` and `./data/remote`, then
 /// increments the register by one and applies that as a new op -- a minimal reference for how the
 /// pieces fit together end to end.
@@ -19,7 +19,8 @@ async fn main() -> Result<()> {
     let data_dir = std::fs::canonicalize("./").unwrap().join("data");
 
     let storage = Storage::new(data_dir.join("local"), data_dir.join("remote"))?;
-    let protector = EnvelopeProtector::new(KeyHandler::new());
+    let protector =
+        EnvelopeProtector::new(PasswordKeySlot::new(AtRest::encrypt("example password")));
     let open_options = crdt_enc::OpenOptions {
         storage,
         protector,

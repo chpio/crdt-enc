@@ -31,20 +31,19 @@ EnvelopeProtector<KS>             implements crdt_enc::protector::Protector
 Only two methods, no CRDT or sync bookkeeping required -- that part is entirely `EnvelopeProtector`'s job:
 
 ```rust
-#[async_trait]
 impl KeySlotProtector for MyKeySlot {
-    async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+    async fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> Result<Vec<u8>> {
         // protect `key` (e.g. encrypt it with a password-derived key, or for GPG recipients)
     }
 
-    async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
+    async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<Zeroizing<Vec<u8>>> {
         // reverse of wrap_key
     }
 }
 ```
 
-[`crdt-enc-gpgme`](../crdt-enc-gpgme/) is the only implementation right now, and it's a passthrough
-stub (no real GPG encryption yet).
+[`crdt-enc-password`](../crdt-enc-password/) is the only implementation right now, protecting the
+content key with an Argon2id-derived key.
 
 ## Usage
 
