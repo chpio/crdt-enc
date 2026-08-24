@@ -10,7 +10,7 @@ use ::crdt_enc::utils::{LockBox, VersionBytesRef};
 use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
-use ::std::{borrow::Cow, collections::HashMap};
+use ::std::collections::HashMap;
 use ::tokio::task::spawn_blocking;
 use ::uuid::Uuid;
 use ::zeroize::Zeroizing;
@@ -156,7 +156,7 @@ impl KeySlotProtector for PasswordKeySlot {
                 t_cost,
                 p_cost,
                 nonce,
-                ciphertext: Cow::Owned(ciphertext),
+                ciphertext,
             };
             let envelope_bytes =
                 rmp_serde::to_vec_named(&envelope).context("failed to encode password envelope")?;
@@ -178,7 +178,6 @@ impl KeySlotProtector for PasswordKeySlot {
             .context("not matching version of password envelope")?;
         let envelope: Envelope = rmp_serde::from_slice(version_box.as_ref())
             .context("failed to parse password envelope")?;
-        let nonce = envelope.nonce;
 
         let cached_kek = self
             .unwrap_cache
@@ -202,15 +201,13 @@ impl KeySlotProtector for PasswordKeySlot {
             }
         };
 
-        let ciphertext = envelope.ciphertext.clone().into_owned();
-
         spawn_blocking(move || {
             let aead = XChaCha20Poly1305::new(
                 &AeadKey::try_from(kek.decrypt().as_bytes())
                     .expect("kek is always KEK_LEN bytes by construction"),
             );
-            let xnonce = XNonce::from(nonce);
-            aead.decrypt(&xnonce, ciphertext.as_ref())
+            let xnonce = XNonce::from(envelope.nonce);
+            aead.decrypt(&xnonce, envelope.ciphertext.as_ref())
                 .map_err(|_| Error::msg("decryption failed (wrong password or tampered data)"))
         })
         .await?
@@ -243,7 +240,7 @@ fn derive_kek(
 /// decrypt the ciphertext travels alongside it, so no shared/pre-agreed salt between devices is
 /// needed. Wrapped in an outer `VersionBytesRef`/`ENVELOPE_VERSION` tag by `wrap_key`/`unwrap_key`.
 #[derive(Serialize, Deserialize, Debug)]
-struct Envelope<'a> {
+struct Envelope {
     /// The Argon2 salt used to derive the key-encryption key.
     #[serde(with = "serde_bytes")]
     salt: [u8; SALT_LEN],
@@ -260,7 +257,6 @@ struct Envelope<'a> {
     nonce: [u8; NONCE_LEN],
 
     /// The encrypted key bytes.
-    #[serde(borrow)]
     #[serde(with = "serde_bytes")]
-    ciphertext: Cow<'a, [u8]>,
+    ciphertext: Vec<u8>,
 }
