@@ -199,9 +199,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             let enc_box_bytes =
                 rmp_serde::to_vec_named(&enc_box).context("failed to encode encryption box")?;
             let version_box = VersionBytesRef::new(DATA_VERSION, enc_box_bytes.as_ref());
-            let version_box_bytes =
-                rmp_serde::to_vec_named(&version_box).context("failed to encode version box")?;
-            Ok(version_box_bytes)
+            Ok(version_box.serialize())
         })
         .await?
     }
@@ -210,8 +208,8 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
     /// necessarily the current latest one, e.g. after a rotation) via `Keys::get_key`. Fails if
     /// that key is unknown, the ciphertext was tampered with, or authentication fails.
     async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
-        let version_box: VersionBytesRef =
-            rmp_serde::from_slice(&enc_data).context("failed to parse version box")?;
+        let version_box =
+            VersionBytesRef::deserialize(&enc_data).context("failed to parse version box")?;
         version_box
             .ensure_version(DATA_VERSION)
             .context("not matching version of encryption box")?;
