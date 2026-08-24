@@ -61,7 +61,9 @@ where
     /// GPG-encrypts it for one or more recipients, or symmetrically encrypts it with a
     /// password-derived key). Takes `key` owned since every caller already owns it (it's freshly
     /// serialized/generated), letting implementations avoid an otherwise-pointless internal clone.
-    fn wrap_key(&self, key: Vec<u8>) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// Takes `Zeroizing` since `key` is itself unprotected plaintext key material (the counterpart
+    /// of `unwrap_key`'s `Zeroizing` return).
+    fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
     /// Reverses [`wrap_key`](KeySlotProtector::wrap_key), recovering the original key bytes.
     /// Should fail (`Err`) rather than return garbage if `wrapped` can't be
@@ -322,7 +324,7 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
                         },
                         actor,
                         CURRENT_VERSION,
-                        |buf| async move { self.key_slot.wrap_key(buf).await },
+                        |buf| async move { self.key_slot.wrap_key(Zeroizing::new(buf)).await },
                     )
                     .await?;
 

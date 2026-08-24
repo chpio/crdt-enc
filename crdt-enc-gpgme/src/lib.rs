@@ -35,9 +35,9 @@ impl Default for KeyHandler {
 impl KeySlotProtector for KeyHandler {
     /// **Stub, not yet implemented**: currently returns `key` unmodified instead of encrypting it
     /// for any GPG recipients.
-    async fn wrap_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
+    async fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> Result<Vec<u8>> {
         // TODO: encrypt for GPG recipients
-        Ok(key)
+        Ok(key.to_vec())
     }
 
     /// **Stub, not yet implemented**: currently returns `wrapped` unmodified instead of decrypting

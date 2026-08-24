@@ -1,5 +1,6 @@
 use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
 use ::crdt_enc_password::PasswordKeySlot;
+use ::zeroize::Zeroizing;
 
 // tiny Argon2 params so tests run fast; production code should use `PasswordKeySlot::new`
 fn fast_key_slot(password: &str) -> PasswordKeySlot {
@@ -11,7 +12,10 @@ async fn round_trip() {
     let key_slot = fast_key_slot("correct horse battery staple");
     let key = b"some 32 byte content key material";
 
-    let wrapped = key_slot.wrap_key(key.to_vec()).await.unwrap();
+    let wrapped = key_slot
+        .wrap_key(Zeroizing::new(key.to_vec()))
+        .await
+        .unwrap();
     let unwrapped = key_slot.unwrap_key(wrapped).await.unwrap();
 
     assert_eq!(unwrapped.as_slice(), key);
@@ -20,7 +24,7 @@ async fn round_trip() {
 #[tokio::test]
 async fn wrong_password_fails() {
     let wrapped = fast_key_slot("right password")
-        .wrap_key(b"secret key bytes".to_vec())
+        .wrap_key(Zeroizing::new(b"secret key bytes".to_vec()))
         .await
         .unwrap();
 
@@ -33,7 +37,7 @@ async fn wrong_password_fails() {
 async fn tampered_ciphertext_fails() {
     let key_slot = fast_key_slot("a password");
     let mut wrapped = key_slot
-        .wrap_key(b"secret key bytes".to_vec())
+        .wrap_key(Zeroizing::new(b"secret key bytes".to_vec()))
         .await
         .unwrap();
 
@@ -49,8 +53,14 @@ async fn same_instance_reuses_salt_but_nonce_still_differs() {
     let key_slot = fast_key_slot("a password");
     let key = b"secret key bytes";
 
-    let wrapped_a = key_slot.wrap_key(key.to_vec()).await.unwrap();
-    let wrapped_b = key_slot.wrap_key(key.to_vec()).await.unwrap();
+    let wrapped_a = key_slot
+        .wrap_key(Zeroizing::new(key.to_vec()))
+        .await
+        .unwrap();
+    let wrapped_b = key_slot
+        .wrap_key(Zeroizing::new(key.to_vec()))
+        .await
+        .unwrap();
 
     // different ciphertext/nonce each call ...
     assert_ne!(wrapped_a, wrapped_b);
@@ -70,11 +80,11 @@ async fn isolated_instances_that_never_synced_use_different_salts() {
     let key = b"secret key bytes";
 
     let wrapped_a = fast_key_slot("a password")
-        .wrap_key(key.to_vec())
+        .wrap_key(Zeroizing::new(key.to_vec()))
         .await
         .unwrap();
     let wrapped_b = fast_key_slot("a password")
-        .wrap_key(key.to_vec())
+        .wrap_key(Zeroizing::new(key.to_vec()))
         .await
         .unwrap();
 
@@ -87,7 +97,7 @@ async fn instance_that_saw_a_wrap_converges_on_its_salt() {
 
     // instance A mints the first-ever salt
     let a = fast_key_slot("shared password");
-    let wrapped_by_a = a.wrap_key(key.to_vec()).await.unwrap();
+    let wrapped_by_a = a.wrap_key(Zeroizing::new(key.to_vec())).await.unwrap();
 
     // instance B "syncs" by unwrapping A's entry before ever wrapping anything itself --
     // mirrors EnvelopeProtector::set_remote_meta decoding existing entries before deciding
@@ -99,7 +109,7 @@ async fn instance_that_saw_a_wrap_converges_on_its_salt() {
     );
 
     // B's own first wrap must now reuse A's salt instead of minting a third one
-    let wrapped_by_b = b.wrap_key(key.to_vec()).await.unwrap();
+    let wrapped_by_b = b.wrap_key(Zeroizing::new(key.to_vec())).await.unwrap();
     assert_eq!(
         a.unwrap_key(wrapped_by_b.clone()).await.unwrap().as_slice(),
         key

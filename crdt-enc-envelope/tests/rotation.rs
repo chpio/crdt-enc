@@ -16,8 +16,8 @@ const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 struct NoopKeySlot;
 
 impl KeySlotProtector for NoopKeySlot {
-    async fn wrap_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(key)
+    async fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> Result<Vec<u8>> {
+        Ok(key.to_vec())
     }
 
     async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<Zeroizing<Vec<u8>>> {

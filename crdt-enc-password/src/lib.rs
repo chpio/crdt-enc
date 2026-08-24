@@ -130,7 +130,7 @@ impl KeySlotProtector for PasswordKeySlot {
     /// with a fresh random nonce, and encodes the result -- salt, Argon2 parameters, nonce,
     /// ciphertext -- as a self-describing `Envelope`, tagged with `ENVELOPE_VERSION` so the format
     /// can evolve safely.
-    async fn wrap_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
+    async fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
         let (m_cost, t_cost, p_cost) = (self.m_cost, self.t_cost, self.p_cost);
