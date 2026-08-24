@@ -89,7 +89,9 @@ async fn instance_that_saw_a_wrap_converges_on_its_salt() {
         #[serde(with = "serde_bytes")]
         salt: Vec<u8>,
     }
-    let salt_a: EnvelopeSalt = rmp_serde::from_slice(&wrapped_by_a).unwrap();
-    let salt_b: EnvelopeSalt = rmp_serde::from_slice(&wrapped_by_b).unwrap();
+    let version_box_a = ::crdt_enc::utils::VersionBytesRef::deserialize(&wrapped_by_a).unwrap();
+    let version_box_b = ::crdt_enc::utils::VersionBytesRef::deserialize(&wrapped_by_b).unwrap();
+    let salt_a: EnvelopeSalt = rmp_serde::from_slice(version_box_a.as_ref()).unwrap();
+    let salt_b: EnvelopeSalt = rmp_serde::from_slice(version_box_b.as_ref()).unwrap();
     assert_eq!(salt_a.salt, salt_b.salt);
 }

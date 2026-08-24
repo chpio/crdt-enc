@@ -14,6 +14,7 @@ argon2 = "0.5"
 zeroize = "1.9"
 chacha20poly1305 = "0.11"
 tokio = { version = "1", features = ["rt"] }
+uuid = "1"
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"
@@ -24,6 +25,5 @@ path = "../crdt-enc-envelope"
 [dev-dependencies]
 crdt-enc-tokio = { path = "../crdt-enc-tokio" }
 crdts = "7"
-uuid = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros"] }

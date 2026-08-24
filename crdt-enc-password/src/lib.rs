@@ -6,13 +6,17 @@
 use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
-use ::crdt_enc::utils::LockBox;
+use ::crdt_enc::utils::{LockBox, VersionBytesRef};
 use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, collections::HashMap};
 use ::tokio::task::spawn_blocking;
+use ::uuid::Uuid;
 use ::zeroize::Zeroizing;
+
+/// version of the wrapped-key envelope format
+const ENVELOPE_VERSION: Uuid = Uuid::from_u128(0x_3dd69616_4892_4088_9143_c40025e6e11e);
 
 /// The byte length of an Argon2 salt.
 const SALT_LEN: usize = 16;
@@ -124,7 +128,8 @@ impl PasswordKeySlot {
 impl KeySlotProtector for PasswordKeySlot {
     /// Encrypts `key` with an Argon2id-derived key (see `own_salt_kek`) using XChaCha20Poly1305
     /// with a fresh random nonce, and encodes the result -- salt, Argon2 parameters, nonce,
-    /// ciphertext -- as a self-describing `Envelope`.
+    /// ciphertext -- as a self-describing `Envelope`, tagged with `ENVELOPE_VERSION` so the format
+    /// can evolve safely.
     async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
@@ -153,18 +158,26 @@ impl KeySlotProtector for PasswordKeySlot {
                 nonce,
                 ciphertext: Cow::Owned(ciphertext),
             };
+            let envelope_bytes =
+                rmp_serde::to_vec_named(&envelope).context("failed to encode password envelope")?;
 
-            rmp_serde::to_vec_named(&envelope).context("failed to encode password envelope")
+            Ok(VersionBytesRef::new(ENVELOPE_VERSION, &envelope_bytes).serialize())
         })
         .await?
     }
 
     /// Parses `wrapped` as an `Envelope`, derives (or looks up in `unwrap_cache`) the key for its
-    /// salt/parameters, and decrypts it. Fails if the envelope can't be parsed, its nonce is the
-    /// wrong length, or decryption fails (wrong password or tampered data).
+    /// salt/parameters, and decrypts it. Fails if the envelope can't be parsed, its version tag
+    /// doesn't match `ENVELOPE_VERSION`, its nonce is the wrong length, or decryption fails (wrong
+    /// password or tampered data).
     async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
-        let envelope: Envelope =
-            rmp_serde::from_slice(wrapped).context("failed to parse password envelope")?;
+        let version_box =
+            VersionBytesRef::deserialize(wrapped).context("failed to parse password envelope")?;
+        version_box
+            .ensure_version(ENVELOPE_VERSION)
+            .context("not matching version of password envelope")?;
+        let envelope: Envelope = rmp_serde::from_slice(version_box.as_ref())
+            .context("failed to parse password envelope")?;
         let nonce = envelope.nonce;
 
         let cached_kek = self
@@ -228,7 +241,7 @@ fn derive_kek(
 
 /// A self-describing wrapped key: everything needed to re-derive the same key-encryption key and
 /// decrypt the ciphertext travels alongside it, so no shared/pre-agreed salt between devices is
-/// needed.
+/// needed. Wrapped in an outer `VersionBytesRef`/`ENVELOPE_VERSION` tag by `wrap_key`/`unwrap_key`.
 #[derive(Serialize, Deserialize, Debug)]
 struct Envelope<'a> {
     /// The Argon2 salt used to derive the key-encryption key.
