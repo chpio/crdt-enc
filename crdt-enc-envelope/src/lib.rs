@@ -161,16 +161,49 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
         Ok(())
     }
 
-    /// Encrypts `clear_text` with the current content key (XChaCha20Poly1305), tagging the
-    /// ciphertext with that key's id so `decrypt` can look up the exact same key later even
-    /// after a rotation. Fails if no content key has been established yet (see
-    /// `set_remote_meta`).
+    /// Encrypts `clear_text` with the current content key (XChaCha20Poly1305, random nonce),
+    /// tagging the ciphertext with that key's id (in a versioned `EncBox`) so `decrypt` can look
+    /// up the exact same key later even after a rotation. Fails if no content key has been
+    /// established yet (see `set_remote_meta`).
     async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
         let key = self
             .data
             .with(|data| data.keys.latest_key())
             .context("no latest key")?;
-        encrypt_content(&key, clear_text).await
+
+        let key_id = key.id();
+        key.key()
+            .ensure_version(KEY_VERSION)
+            .context("not matching key version")?;
+        let key: [u8; KEY_LEN] = key
+            .key()
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::msg("Invalid key length"))?;
+
+        spawn_blocking(move || {
+            let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
+            let mut nonce = [0u8; NONCE_LEN];
+            rng()
+                .try_fill_bytes(&mut nonce)
+                .context("Unable to get random data for nonce")?;
+            let xnonce = XNonce::from(nonce);
+            let enc_data = aead
+                .encrypt(&xnonce, clear_text.as_ref())
+                .context("Encryption failed")?;
+            let enc_box = EncBox {
+                key_id,
+                nonce,
+                enc_data: Cow::Owned(enc_data),
+            };
+            let enc_box_bytes =
+                rmp_serde::to_vec_named(&enc_box).context("failed to encode encryption box")?;
+            let version_box = VersionBytesRef::new(DATA_VERSION, enc_box_bytes.as_ref());
+            let version_box_bytes =
+                rmp_serde::to_vec_named(&version_box).context("failed to encode version box")?;
+            Ok(version_box_bytes)
+        })
+        .await?
     }
 
     /// Reverses `encrypt`. Looks up the specific key the ciphertext was tagged with (not
@@ -190,7 +223,26 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             .with(|data| data.keys.get_key(enc_box.key_id))
             .with_context(|| format!("no key with id {}", enc_box.key_id))?;
 
-        decrypt_content(&key, enc_box).await
+        key.key()
+            .ensure_version(KEY_VERSION)
+            .context("not matching key version")?;
+        let key: [u8; KEY_LEN] = key
+            .key()
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::msg("Invalid key length"))?;
+        let nonce = enc_box.nonce;
+        let ciphertext = enc_box.enc_data.into_owned();
+
+        spawn_blocking(move || {
+            let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
+            let xnonce = XNonce::from(nonce);
+            let clear_text = aead
+                .decrypt(&xnonce, ciphertext.as_ref())
+                .context("Decryption failed")?;
+            Ok(clear_text)
+        })
+        .await?
     }
 }
 
@@ -287,73 +339,9 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
     }
 }
 
-/// Encrypts `clear_text` with `key` (XChaCha20Poly1305, random nonce) and wraps the result, tagged
-/// with `key`'s id, in a versioned `EncBox` so `decrypt_content` can later look up the exact same
-/// key again. Validates `key`'s version/length first.
-async fn encrypt_content(key: &Key, clear_text: Vec<u8>) -> Result<Vec<u8>> {
-    let key_id = key.id();
-    key.key()
-        .ensure_version(KEY_VERSION)
-        .context("not matching key version")?;
-    let key: [u8; KEY_LEN] = key
-        .key()
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::msg("Invalid key length"))?;
-
-    spawn_blocking(move || {
-        let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
-        let mut nonce = [0u8; NONCE_LEN];
-        rng()
-            .try_fill_bytes(&mut nonce)
-            .context("Unable to get random data for nonce")?;
-        let xnonce = XNonce::from(nonce);
-        let enc_data = aead
-            .encrypt(&xnonce, clear_text.as_ref())
-            .context("Encryption failed")?;
-        let enc_box = EncBox {
-            key_id,
-            nonce,
-            enc_data: Cow::Owned(enc_data),
-        };
-        let enc_box_bytes =
-            rmp_serde::to_vec_named(&enc_box).context("failed to encode encryption box")?;
-        let version_box = VersionBytesRef::new(DATA_VERSION, enc_box_bytes.as_ref());
-        let version_box_bytes =
-            rmp_serde::to_vec_named(&version_box).context("failed to encode version box")?;
-        Ok(version_box_bytes)
-    })
-    .await?
-}
-
-/// Decrypts an already-parsed [`EncBox`] with `key` (which the caller has already looked up via
-/// the box's `key_id`).
-async fn decrypt_content(key: &Key, enc_box: EncBox<'_>) -> Result<Vec<u8>> {
-    key.key()
-        .ensure_version(KEY_VERSION)
-        .context("not matching key version")?;
-    let key: [u8; KEY_LEN] = key
-        .key()
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::msg("Invalid key length"))?;
-    let nonce = enc_box.nonce;
-    let ciphertext = enc_box.enc_data.into_owned();
-
-    spawn_blocking(move || {
-        let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
-        let xnonce = XNonce::from(nonce);
-        let clear_text = aead
-            .decrypt(&xnonce, ciphertext.as_ref())
-            .context("Decryption failed")?;
-        Ok(clear_text)
-    })
-    .await?
-}
-
 /// One piece of content encrypted with one content-encryption key: which key (by id), the random
 /// nonce used, and the ciphertext. Wrapped in an outer `VersionBytesRef`/`DATA_VERSION` tag by
-/// `encrypt_content`/`decrypt_content`.
+/// `Protector::encrypt`/`Protector::decrypt`.
 #[derive(Serialize, Deserialize, Debug)]
 struct EncBox<'a> {
     /// Which content-encryption key (by [`Key::id`]) `enc_data` was encrypted with -- looked up via
