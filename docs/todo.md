@@ -1,11 +1,3 @@
-* replace agnostik (higher priority now): every `cargo build`/`update` prints a future-incompatibility
-  warning from its `cfg_aliases = "0.1.1"` build-dependency (trailing-semicolon-in-macro, will become
-  a hard error in a future Rust release, see rust-lang/rust#79813). Not fixable via `[patch]` --
-  agnostik's manifest pins `cfg_aliases` to `^0.1.1`, and Cargo refuses to substitute the fixed 0.2.x
-  release (or even our own git-patched cfg_aliases) because that falls outside the semver range;
-  tried and confirmed this doesn't work. Only real fixes are forking agnostik to bump its
-  `cfg_aliases` dependency, or dropping agnostik for something else entirely (find an alternative
-  `spawn_blocking` helper, or drop the async-runtime-agnostic requirement).
 * change crate names
 * switch pgp to https://crates.io/crates/sequoia-openpgp
 * harden the Storage trait contract for load_ops -- document and test that it must return ops

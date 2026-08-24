@@ -3,7 +3,6 @@
 //! for details.
 #![warn(missing_docs)]
 
-use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
@@ -12,6 +11,7 @@ use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, collections::HashMap};
+use ::tokio::task::spawn_blocking;
 use ::zeroize::Zeroizing;
 
 /// The byte length of an Argon2 salt.
@@ -112,7 +112,7 @@ impl PasswordKeySlot {
             let kek = derive_kek(&password, &salt, m_cost, t_cost, p_cost)?;
             Result::<_, Error>::Ok((salt, kek))
         })
-        .await?;
+        .await??;
 
         self.unwrap_cache
             .with(|cache| cache.insert(salt, kek.clone()));
@@ -156,7 +156,7 @@ impl KeySlotProtector for PasswordKeySlot {
 
             rmp_serde::to_vec_named(&envelope).context("failed to encode password envelope")
         })
-        .await
+        .await?
     }
 
     /// Parses `wrapped` as an `Envelope`, derives (or looks up in `unwrap_cache`) the key for its
@@ -180,7 +180,7 @@ impl KeySlotProtector for PasswordKeySlot {
 
                 let kek =
                     spawn_blocking(move || derive_kek(&password, &salt, m_cost, t_cost, p_cost))
-                        .await?;
+                        .await??;
 
                 self.unwrap_cache
                     .with(|cache| cache.insert(envelope.salt, kek.clone()));
@@ -200,7 +200,7 @@ impl KeySlotProtector for PasswordKeySlot {
             aead.decrypt(&xnonce, ciphertext.as_ref())
                 .map_err(|_| Error::msg("decryption failed (wrong password or tampered data)"))
         })
-        .await
+        .await?
     }
 }
 

@@ -10,6 +10,3 @@ members = [
     "crdt-enc-tokio",
     "examples/*",
 ]
-
-[patch.crates-io]
-agnostik = {git = "https://github.com/chpio/agnostik.git", branch = "master"}

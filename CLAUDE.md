@@ -56,10 +56,6 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
   `EnvelopeProtector<KeyHandler>` (gpgme's stub key-slot) together against a CRDT `MVReg<u64, Uuid>`
   state, useful as the reference for how the pieces fit together end to end.
 
-`Cargo.toml` at the workspace root also patches `agnostik` (the async-runtime-agnostic `spawn_blocking`
-helper used by `crdt-enc-envelope` for its Argon2/AEAD work) to a git branch — don't "helpfully" remove
-that patch.
-
 ## Core architecture (`crdt-enc/src/lib.rs`)
 
 `Core<S, ST, P>` is generic over the CRDT state type `S` and two trait impls (`ST: Storage`,

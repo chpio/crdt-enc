@@ -10,10 +10,10 @@ anyhow = "1"
 serde = "1"
 rmp-serde = "1"
 serde_bytes = "0.11"
-agnostik = "0.2"
 argon2 = "0.5"
 zeroize = "1.9"
 chacha20poly1305 = "0.11"
+tokio = { version = "1", features = ["rt"] }
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"
@@ -21,13 +21,9 @@ path = "../crdt-enc"
 [dependencies.crdt-enc-envelope]
 path = "../crdt-enc-envelope"
 
-[dev-dependencies.agnostik]
-version = "0.2"
-features = ["runtime_tokio1"]
-
 [dev-dependencies]
 crdt-enc-tokio = { path = "../crdt-enc-tokio" }
 crdts = "7"
 uuid = "1"
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros"] }

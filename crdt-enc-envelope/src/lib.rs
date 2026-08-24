@@ -6,7 +6,6 @@
 #![warn(missing_docs)]
 
 use crate::keys::{Key, Keys};
-use ::agnostik::spawn_blocking;
 use ::anyhow::{Context, Error, Result};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::{
@@ -22,6 +21,7 @@ use ::futures::lock::Mutex as AsyncMutex;
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug, future::Future, mem, pin::Pin};
+use ::tokio::task::spawn_blocking;
 use ::uuid::Uuid;
 
 /// [`at_rest::AtRest`]: a reusable, generic "encrypt this secret while it sits idle in memory"
@@ -323,7 +323,7 @@ async fn encrypt_content(key: &Key, clear_text: Vec<u8>) -> Result<Vec<u8>> {
             rmp_serde::to_vec_named(&version_box).context("failed to encode version box")?;
         Ok(version_box_bytes)
     })
-    .await
+    .await?
 }
 
 /// Decrypts an already-parsed [`EncBox`] with `key` (which the caller has already looked up via
@@ -348,7 +348,7 @@ async fn decrypt_content(key: &Key, enc_box: EncBox<'_>) -> Result<Vec<u8>> {
             .context("Decryption failed")?;
         Ok(clear_text)
     })
-    .await
+    .await?
 }
 
 /// One piece of content encrypted with one content-encryption key: which key (by id), the random
