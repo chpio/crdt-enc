@@ -23,6 +23,7 @@ use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug, future::Future, mem, pin::Pin};
 use ::tokio::task::spawn_blocking;
 use ::uuid::Uuid;
+use ::zeroize::Zeroizing;
 
 /// [`at_rest::AtRest`]: a reusable, generic "encrypt this secret while it sits idle in memory"
 /// primitive.
@@ -58,13 +59,19 @@ where
 {
     /// Protects `key` so it can be stored/synced without exposing it in the clear (e.g.
     /// GPG-encrypts it for one or more recipients, or symmetrically encrypts it with a
-    /// password-derived key).
-    fn wrap_key(&self, key: &[u8]) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// password-derived key). Takes `key` owned since every caller already owns it (it's freshly
+    /// serialized/generated), letting implementations avoid an otherwise-pointless internal clone.
+    fn wrap_key(&self, key: Vec<u8>) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
     /// Reverses [`wrap_key`](KeySlotProtector::wrap_key), recovering the original key bytes.
     /// Should fail (`Err`) rather than return garbage if `wrapped` can't be
-    /// authenticated/decrypted (e.g. wrong password, tampered data).
-    fn unwrap_key(&self, wrapped: &[u8]) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// authenticated/decrypted (e.g. wrong password, tampered data). Takes `wrapped` owned for the
+    /// same reason as `wrap_key`'s `key`. Returns `Zeroizing` since this is the freshly-recovered
+    /// plaintext key material.
+    fn unwrap_key(
+        &self,
+        wrapped: Vec<u8>,
+    ) -> impl Future<Output = Result<Zeroizing<Vec<u8>>>> + Send;
 }
 
 /// `EnvelopeProtector`'s mutable in-process state, guarded together so it's always mutated/read as
@@ -144,7 +151,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
         let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
             &remote_meta,
             &SUPPORTED_VERSIONS,
-            |buf| async move { self.key_slot.unwrap_key(&buf).await },
+            |buf| async move { self.key_slot.unwrap_key(buf).await },
         )
         .await?;
 
@@ -283,7 +290,7 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
             let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
                 &remote_meta,
                 &SUPPORTED_VERSIONS,
-                |buf| async move { self.key_slot.unwrap_key(&buf).await },
+                |buf| async move { self.key_slot.unwrap_key(buf).await },
             )
             .await?;
 
@@ -315,7 +322,7 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
                         },
                         actor,
                         CURRENT_VERSION,
-                        |buf| async move { self.key_slot.wrap_key(&buf).await },
+                        |buf| async move { self.key_slot.wrap_key(buf).await },
                     )
                     .await?;
 

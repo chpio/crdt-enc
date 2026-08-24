@@ -4,6 +4,7 @@ use ::crdt_enc_envelope::{EnvelopeProtector, KeySlotProtector};
 use ::crdt_enc_tokio::Storage;
 use ::crdts::MVReg;
 use ::uuid::Uuid;
+use ::zeroize::Zeroizing;
 
 const CURRENT_DATA_VERSION: Uuid = Uuid::from_u128(0x_7c3e2a58_9b14_4f6d_8a02_1e5f9c3b7d4a);
 const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
@@ -15,12 +16,12 @@ const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 struct NoopKeySlot;
 
 impl KeySlotProtector for NoopKeySlot {
-    async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
-        Ok(key.to_vec())
+    async fn wrap_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(key)
     }
 
-    async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
-        Ok(wrapped.to_vec())
+    async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<Zeroizing<Vec<u8>>> {
+        Ok(Zeroizing::new(wrapped))
     }
 }
 

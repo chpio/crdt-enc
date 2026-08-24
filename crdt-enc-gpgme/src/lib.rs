@@ -5,6 +5,7 @@
 
 use ::anyhow::Result;
 use ::crdt_enc_envelope::KeySlotProtector;
+use ::zeroize::Zeroizing;
 
 /// Initializes the underlying `gpgme` library. Must be called once before using [`KeyHandler`].
 pub fn init() {
@@ -34,15 +35,15 @@ impl Default for KeyHandler {
 impl KeySlotProtector for KeyHandler {
     /// **Stub, not yet implemented**: currently returns `key` unmodified instead of encrypting it
     /// for any GPG recipients.
-    async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+    async fn wrap_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
         // TODO: encrypt for GPG recipients
-        Ok(key.to_vec())
+        Ok(key)
     }
 
     /// **Stub, not yet implemented**: currently returns `wrapped` unmodified instead of decrypting
     /// it via GPG.
-    async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
+    async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<Zeroizing<Vec<u8>>> {
         // TODO: decrypt via GPG
-        Ok(wrapped.to_vec())
+        Ok(Zeroizing::new(wrapped))
     }
 }

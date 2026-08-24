@@ -130,10 +130,9 @@ impl KeySlotProtector for PasswordKeySlot {
     /// with a fresh random nonce, and encodes the result -- salt, Argon2 parameters, nonce,
     /// ciphertext -- as a self-describing `Envelope`, tagged with `ENVELOPE_VERSION` so the format
     /// can evolve safely.
-    async fn wrap_key(&self, key: &[u8]) -> Result<Vec<u8>> {
+    async fn wrap_key(&self, key: Vec<u8>) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
-        let key = key.to_vec();
         let (m_cost, t_cost, p_cost) = (self.m_cost, self.t_cost, self.p_cost);
 
         spawn_blocking(move || {
@@ -170,9 +169,9 @@ impl KeySlotProtector for PasswordKeySlot {
     /// salt/parameters, and decrypts it. Fails if the envelope can't be parsed, its version tag
     /// doesn't match `ENVELOPE_VERSION`, its nonce is the wrong length, or decryption fails (wrong
     /// password or tampered data).
-    async fn unwrap_key(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
+    async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<Zeroizing<Vec<u8>>> {
         let version_box =
-            VersionBytesRef::deserialize(wrapped).context("failed to parse password envelope")?;
+            VersionBytesRef::deserialize(&wrapped).context("failed to parse password envelope")?;
         version_box
             .ensure_version(ENVELOPE_VERSION)
             .context("not matching version of password envelope")?;
@@ -208,6 +207,7 @@ impl KeySlotProtector for PasswordKeySlot {
             );
             let xnonce = XNonce::from(envelope.nonce);
             aead.decrypt(&xnonce, envelope.ciphertext.as_ref())
+                .map(Zeroizing::new)
                 .map_err(|_| Error::msg("decryption failed (wrong password or tampered data)"))
         })
         .await?
