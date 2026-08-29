@@ -3,7 +3,7 @@
 
 use ::anyhow::{Error, Result};
 use ::crdt_enc::utils::{
-    EmptyCrdt, LockBox, VersionBytes, decode_version_bytes_mvreg,
+    EmptyCrdt, LockBox, SecretBytes, VersionBytes, decode_version_bytes_mvreg,
     decode_version_bytes_mvreg_custom, decode_version_bytes_mvreg_custom_phf,
     encode_version_bytes_mvreg, encode_version_bytes_mvreg_custom,
 };
@@ -146,19 +146,20 @@ async fn custom_encode_decode_round_trips() {
 
     // ... with it, the value comes back
     let decoded: ReadCtx<MaxU64, Uuid> =
-        decode_version_bytes_mvreg_custom(&reg, SUPPORTED, |buf| async move { Ok(flip(buf)) })
-            .await
-            .unwrap();
+        decode_version_bytes_mvreg_custom(&reg, SUPPORTED, |buf| async move {
+            Ok(SecretBytes::new(flip(buf)))
+        })
+        .await
+        .unwrap();
     assert_eq!(decoded.val, MaxU64(42));
 
     // the `phf` variant differs only in how it checks the version
-    let decoded: ReadCtx<MaxU64, Uuid> = decode_version_bytes_mvreg_custom_phf(
-        &reg,
-        &SUPPORTED_PHF,
-        |buf| async move { Ok(flip(buf)) },
-    )
-    .await
-    .unwrap();
+    let decoded: ReadCtx<MaxU64, Uuid> =
+        decode_version_bytes_mvreg_custom_phf(&reg, &SUPPORTED_PHF, |buf| async move {
+            Ok(SecretBytes::new(flip(buf)))
+        })
+        .await
+        .unwrap();
     assert_eq!(decoded.val, MaxU64(42));
 }
 
@@ -182,17 +183,15 @@ async fn custom_decode_rejects_an_unsupported_version() {
     .await
     .unwrap();
 
-    decode_version_bytes_mvreg_custom::<MaxU64, _, _, Vec<u8>>(&reg, SUPPORTED, |buf| async move {
-        Ok(flip(buf))
+    decode_version_bytes_mvreg_custom::<MaxU64, _, _>(&reg, SUPPORTED, |buf| async move {
+        Ok(SecretBytes::new(flip(buf)))
     })
     .await
     .unwrap_err();
 
-    decode_version_bytes_mvreg_custom_phf::<MaxU64, _, _, Vec<u8>>(
-        &reg,
-        &SUPPORTED_PHF,
-        |buf| async move { Ok(flip(buf)) },
-    )
+    decode_version_bytes_mvreg_custom_phf::<MaxU64, _, _>(&reg, &SUPPORTED_PHF, |buf| async move {
+        Ok(SecretBytes::new(flip(buf)))
+    })
     .await
     .unwrap_err();
 }
@@ -206,17 +205,15 @@ async fn custom_decode_propagates_a_failing_buf_decode() {
 
     write(&mut reg, actor, MaxU64(1), VERSION);
 
-    decode_version_bytes_mvreg_custom::<MaxU64, _, _, Vec<u8>>(&reg, SUPPORTED, |_| async move {
+    decode_version_bytes_mvreg_custom::<MaxU64, _, _>(&reg, SUPPORTED, |_| async move {
         Err(Error::msg("cannot decrypt"))
     })
     .await
     .unwrap_err();
 
-    decode_version_bytes_mvreg_custom_phf::<MaxU64, _, _, Vec<u8>>(
-        &reg,
-        &SUPPORTED_PHF,
-        |_| async move { Err(Error::msg("cannot decrypt")) },
-    )
+    decode_version_bytes_mvreg_custom_phf::<MaxU64, _, _>(&reg, &SUPPORTED_PHF, |_| async move {
+        Err(Error::msg("cannot decrypt"))
+    })
     .await
     .unwrap_err();
 }
@@ -260,17 +257,15 @@ async fn custom_decode_rejects_content_that_is_not_msgpack() {
     );
     reg.apply(op);
 
-    decode_version_bytes_mvreg_custom::<MaxU64, _, _, Vec<u8>>(&reg, SUPPORTED, |buf| async move {
-        Ok(buf)
+    decode_version_bytes_mvreg_custom::<MaxU64, _, _>(&reg, SUPPORTED, |buf| async move {
+        Ok(SecretBytes::new(buf))
     })
     .await
     .unwrap_err();
 
-    decode_version_bytes_mvreg_custom_phf::<MaxU64, _, _, Vec<u8>>(
-        &reg,
-        &SUPPORTED_PHF,
-        |buf| async move { Ok(buf) },
-    )
+    decode_version_bytes_mvreg_custom_phf::<MaxU64, _, _>(&reg, &SUPPORTED_PHF, |buf| async move {
+        Ok(SecretBytes::new(buf))
+    })
     .await
     .unwrap_err();
 }

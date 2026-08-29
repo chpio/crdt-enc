@@ -150,12 +150,11 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             Ok((data.remote_meta.clone(), core))
         })?;
 
-        let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
-            &remote_meta,
-            &SUPPORTED_VERSIONS,
-            |buf| async move { Ok(self.key_slot.unwrap_key(buf).await?.into_exposed_secret()) },
-        )
-        .await?;
+        let keys_ctx: ReadCtx<Keys, Uuid> =
+            decode_version_bytes_mvreg_custom_phf(&remote_meta, &SUPPORTED_VERSIONS, |buf| {
+                self.key_slot.unwrap_key(buf)
+            })
+            .await?;
 
         self.data.with(|data| {
             data.keys.merge(keys_ctx.val.clone());
@@ -289,12 +288,11 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
 
             let actor = core.info().actor();
             let remote_meta = self.data.with(|data| data.remote_meta.clone());
-            let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
-                &remote_meta,
-                &SUPPORTED_VERSIONS,
-                |buf| async move { Ok(self.key_slot.unwrap_key(buf).await?.into_exposed_secret()) },
-            )
-            .await?;
+            let keys_ctx: ReadCtx<Keys, Uuid> =
+                decode_version_bytes_mvreg_custom_phf(&remote_meta, &SUPPORTED_VERSIONS, |buf| {
+                    self.key_slot.unwrap_key(buf)
+                })
+                .await?;
 
             self.data.with(|data| {
                 data.keys.merge(keys_ctx.val.clone());

@@ -48,8 +48,4 @@ fn secret_bytes_redacts_itself_but_still_hands_the_secret_over_on_request() {
     assert!(!rendered.contains("raw"), "must not leak the plaintext");
 
     assert_eq!(secret.expose_secret(), SECRET);
-
-    // the owned form is the escape hatch for generic `AsRef<[u8]>` bounds this crate doesn't own
-    let exposed = secret.into_exposed_secret();
-    assert_eq!(exposed.as_slice(), SECRET);
 }

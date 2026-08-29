@@ -30,16 +30,4 @@ impl SecretBytes {
     pub fn expose_secret(&self) -> &[u8] {
         &self.0
     }
-
-    /// Gives up the wrapper and hands out the secret as an owned buffer. It still zeroizes on drop,
-    /// but no longer redacts itself in `Debug` -- which is why this is spelled out as a disclosure
-    /// like `expose_secret` rather than offered as an `AsRef`/`Deref` impl. Such an impl would let
-    /// the secret satisfy a generic `AsRef<[u8]>` bound silently and permanently, leaving
-    /// `grep -i expose` no longer able to find every place the plaintext is handed out.
-    ///
-    /// Exists for the one case that needs it: feeding a secret into a generic byte-slice bound this
-    /// crate doesn't control, namely `decode_version_bytes_mvreg_custom_phf`'s `B: AsRef<[u8]>`.
-    pub fn into_exposed_secret(self) -> Zeroizing<Vec<u8>> {
-        self.0
-    }
 }

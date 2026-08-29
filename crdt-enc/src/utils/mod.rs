@@ -76,11 +76,14 @@ pub fn decode_version_bytes_mvreg<T: DeserializeOwned + CvRDT + Default>(
     })
 }
 
-/// `supported_versions` needs to be sorted. `buf_decode`'s output type `B` is generic (only
-/// bounded by `AsRef<[u8]>`) rather than fixed to `Vec<u8>` so callers can plug in something like
-/// `zeroize::Zeroizing<Vec<u8>>` for the decrypted plaintext without this crate -- which stays
-/// deliberately agnostic about protection mechanisms -- needing to know or care about `zeroize`.
-pub async fn decode_version_bytes_mvreg_custom<T, M, Fut, B>(
+/// Like `decode_version_bytes_mvreg`, but runs each value through `buf_decode` (e.g. a
+/// `KeySlotProtector::unwrap_key` call) before deserializing it -- the extension point where a
+/// `Protector` plugs in its actual decryption. `supported_versions` needs to be sorted.
+///
+/// `buf_decode` yields [`SecretBytes`]: a value that needed decoding to be read is by definition
+/// not meant to lie around readable afterwards, so the decoded buffer is zeroized on drop rather
+/// than left to the allocator.
+pub async fn decode_version_bytes_mvreg_custom<T, M, Fut>(
     reg: &MVReg<VersionBytes, Uuid>,
     supported_versions: &[Uuid],
     mut buf_decode: M,
@@ -88,8 +91,7 @@ pub async fn decode_version_bytes_mvreg_custom<T, M, Fut, B>(
 where
     T: DeserializeOwned + CvRDT + Default,
     M: FnMut(Vec<u8>) -> Fut,
-    Fut: Future<Output = Result<B>>,
-    B: AsRef<[u8]>,
+    Fut: Future<Output = Result<SecretBytes>>,
 {
     let (vals, read_ctx) = reg.read().split();
     let val = stream::iter(vals)
@@ -101,9 +103,9 @@ where
             buf_decode(buf).map(|res| res.context("Custom buffer decode function failed"))
         })
         .try_buffer_unordered(16)
-        .try_fold(T::default(), |mut acc, buf: B| async move {
-            let val =
-                rmp_serde::from_slice(buf.as_ref()).context("Could not parse msgpack value")?;
+        .try_fold(T::default(), |mut acc, buf: SecretBytes| async move {
+            let val = rmp_serde::from_slice(buf.expose_secret())
+                .context("Could not parse msgpack value")?;
             acc.merge(val);
             Ok(acc)
         })
@@ -118,7 +120,7 @@ where
 
 /// Identical to `decode_version_bytes_mvreg_custom`, but checks each value's version against a
 /// `phf::Set` (e.g. a crate's `SUPPORTED_VERSIONS` constant) instead of a sorted slice.
-pub async fn decode_version_bytes_mvreg_custom_phf<T, M, Fut, B>(
+pub async fn decode_version_bytes_mvreg_custom_phf<T, M, Fut>(
     reg: &MVReg<VersionBytes, Uuid>,
     supported_versions: &phf::Set<u128>,
     mut buf_decode: M,
@@ -126,8 +128,7 @@ pub async fn decode_version_bytes_mvreg_custom_phf<T, M, Fut, B>(
 where
     T: DeserializeOwned + CvRDT + Default,
     M: FnMut(Vec<u8>) -> Fut,
-    Fut: Future<Output = Result<B>>,
-    B: AsRef<[u8]>,
+    Fut: Future<Output = Result<SecretBytes>>,
 {
     let (vals, read_ctx) = reg.read().split();
     let val = stream::iter(vals)
@@ -139,9 +140,9 @@ where
             buf_decode(buf).map(|res| res.context("Custom buffer decode function failed"))
         })
         .try_buffer_unordered(16)
-        .try_fold(T::default(), |mut acc, buf: B| async move {
-            let val =
-                rmp_serde::from_slice(buf.as_ref()).context("Could not parse msgpack value")?;
+        .try_fold(T::default(), |mut acc, buf: SecretBytes| async move {
+            let val = rmp_serde::from_slice(buf.expose_secret())
+                .context("Could not parse msgpack value")?;
             acc.merge(val);
             Ok(acc)
         })
