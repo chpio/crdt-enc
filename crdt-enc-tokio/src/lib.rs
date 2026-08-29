@@ -31,18 +31,18 @@ use ::uuid::Uuid;
 #[derive(Debug)]
 pub struct Storage {
     /// Device-local metadata directory, exclusively locked for this process (see
-    /// `ensure_local_lock`) and never synced.
+    /// [`Self::ensure_local_lock`]) and never synced.
     local_path: PathBuf,
     /// The synced tree (e.g. shared via Syncthing) holding `meta/`, `states/`, `ops/`.
     remote_path: PathBuf,
-    /// `None` until `ensure_local_lock` acquires the process-exclusive lock on `local_path` (on
-    /// first local-meta access); released automatically when this file handle is dropped
+    /// `None` until [`Self::ensure_local_lock`] acquires the process-exclusive lock on `local_path`
+    /// (on first local-meta access); released automatically when this file handle is dropped
     local_lock: LockBox<Option<fs::File>>,
 }
 
 impl Storage {
-    /// Creates a `Storage` for the given (must be absolute) local/remote directories. Doesn't touch
-    /// the filesystem yet -- directories are created lazily on first use.
+    /// Creates a [`Storage`] for the given (must be absolute) local/remote directories. Doesn't
+    /// touch the filesystem yet -- directories are created lazily on first use.
     pub fn new(local_path: PathBuf, remote_path: PathBuf) -> Result<Storage> {
         ensure!(
             local_path.is_absolute(),
@@ -287,7 +287,8 @@ impl crdt_enc::storage::Storage for Storage {
     /// For each `(actor, first_version)`, reads `<remote_path>/ops/<actor>/<version>` for
     /// consecutively increasing versions starting at `first_version`, stopping at the first missing
     /// version -- relies on op files being written in strictly ascending, contiguous order per
-    /// actor (`store_ops`'s contract), so a gap means "no more ops yet", not "a hole to skip over".
+    /// actor ([`crdt_enc::storage::Storage::store_ops`]'s contract), so a gap means "no more ops
+    /// yet", not "a hole to skip over".
     async fn load_ops(
         &self,
         actor_first_versions: Vec<(Uuid, u64)>,
@@ -348,7 +349,8 @@ impl crdt_enc::storage::Storage for Storage {
     }
 
     /// Writes `<remote_path>/ops/<actor>/<version>` as a new file, failing if it already exists
-    /// (`write_new_file`) -- callers must supply strictly ascending, contiguous versions per actor.
+    /// (`write_new_file`) -- callers must supply strictly ascending, contiguous versions per
+    /// actor.
     async fn store_ops(&self, actor: Uuid, version: u64, bytes: VersionBytes) -> Result<()> {
         let mut path = self.remote_path.join("ops");
         path.push(actor.to_string());
@@ -400,7 +402,7 @@ async fn write_new_file(path: &Path, buf: impl Buf) -> io::Result<()> {
     write_file_inner(path, buf, true).await
 }
 
-/// Shared implementation behind `write_file`/`write_new_file`: opens `path` (in create-new or
+/// Shared implementation behind [`write_file`]/[`write_new_file`]: opens `path` (in create-new or
 /// create-or-truncate mode per `create_new`), writes `buf`, then flushes and fsyncs before
 /// returning.
 async fn write_file_inner(path: &Path, mut buf: impl Buf, create_new: bool) -> io::Result<()> {
@@ -425,18 +427,18 @@ async fn write_file_inner(path: &Path, mut buf: impl Buf, create_new: bool) -> i
     Ok(())
 }
 
-/// Like `read_dir_optional`, but yields only subdirectory entries.
+/// Like [`read_dir_optional`], but yields only subdirectory entries.
 fn read_dir_optional_dirs(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> + 'static {
     read_dir_optional_filter_types(path, false)
 }
 
-/// Like `read_dir_optional`, but yields only regular-file entries.
+/// Like [`read_dir_optional`], but yields only regular-file entries.
 fn read_dir_optional_files(path: PathBuf) -> impl Stream<Item = Result<fs::DirEntry>> + 'static {
     read_dir_optional_filter_types(path, true)
 }
 
-/// Shared implementation behind `read_dir_optional_dirs`/`read_dir_optional_files`: lists `path`
-/// (treating a missing directory as empty, via `read_dir_optional`) and filters to just files or
+/// Shared implementation behind [`read_dir_optional_dirs`]/[`read_dir_optional_files`]: lists `path`
+/// (treating a missing directory as empty, via [`read_dir_optional`]) and filters to just files or
 /// just directories depending on `is_file`.
 fn read_dir_optional_filter_types(
     path: PathBuf,
@@ -493,7 +495,7 @@ async fn read_file_optional(path: &Path) -> Result<Option<Vec<u8>>> {
 /// SHA3-256 hash, and returns that name. Writing the same content twice is idempotent: the second
 /// call leaves the existing file untouched and returns the same name, since the name already
 /// determines the content. (It does *not* verify that the existing file is complete -- a write
-/// interrupted mid-way leaves a short file either way; see `write_file_inner`'s TODO about writing
+/// interrupted mid-way leaves a short file either way; see [`write_file_inner`]'s TODO about writing
 /// to a temporary file and renaming it into place.)
 async fn write_content_addressible_file(
     dir_path: &Path,

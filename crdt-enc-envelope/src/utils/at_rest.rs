@@ -23,10 +23,11 @@ static REST_KEY: LazyLock<[u8; AEAD_KEY_LEN]> = LazyLock::new(|| {
     key
 });
 
-/// Encrypts an arbitrary byte secret under the process-local [`REST_KEY`] so it doesn't sit in
+/// Encrypts an arbitrary byte secret under the process-local `REST_KEY` so it doesn't sit in
 /// plaintext in memory while idle, on top of whatever protection its own wire format already gets
 /// (e.g. a [`KeySlotProtector`](crate::KeySlotProtector)). Decrypted only for the brief moment the
-/// real bytes are actually needed, via `decrypt` -- the returned buffer is zeroized once dropped.
+/// real bytes are actually needed, via [`Self::decrypt`] -- the returned buffer is zeroized once
+/// dropped.
 ///
 /// This is a reusable, generic primitive: it doesn't care what the secret bytes mean (a raw
 /// content-encryption key, a cleartext password, ...), only that they exist and shouldn't sit
@@ -39,12 +40,13 @@ static REST_KEY: LazyLock<[u8; AEAD_KEY_LEN]> = LazyLock::new(|| {
 pub struct AtRest {
     /// The random nonce this ciphertext was encrypted with.
     nonce: [u8; AEAD_NONCE_LEN],
-    /// The encrypted secret bytes. Zeroized on drop too: while a *live* `AtRest` is no safer than
-    /// plaintext against a full memory dump (`REST_KEY` is permanently resident right alongside
+    /// The encrypted secret bytes. Zeroized on drop too: while a *live* [`AtRest`] is no safer than
+    /// plaintext against a full memory dump ([`REST_KEY`] is permanently resident right alongside
     /// it), an *already-dropped* one (e.g. an old KEK superseded after a salt change, or an old
-    /// `Key` superseded by rotation) would otherwise leave its ciphertext sitting in freed heap
-    /// memory indefinitely, combinable with `REST_KEY` (which never goes away) by a *later* memory
-    /// dump. Zeroizing on drop closes that gap for secrets that are supposed to already be gone.
+    /// [`crate::keys::Key`] superseded by rotation) would otherwise leave its ciphertext sitting in
+    /// freed heap memory indefinitely, combinable with [`REST_KEY`] (which never goes away) by a
+    /// *later* memory dump. Zeroizing on drop closes that gap for secrets that are supposed to
+    /// already be gone.
     ciphertext: Zeroizing<Vec<u8>>,
 }
 
@@ -73,9 +75,9 @@ impl AtRest {
         }
     }
 
-    /// Reverses `encrypt`, returning the original plaintext bytes as [`SecretBytes`]. Only fails if
-    /// `REST_KEY` or the ciphertext were somehow corrupted, which would be a bug in this module,
-    /// not a normal runtime error -- panics rather than returning a `Result`.
+    /// Reverses [`Self::encrypt`], returning the original plaintext bytes as [`SecretBytes`]. Only
+    /// fails if `REST_KEY` or the ciphertext were somehow corrupted, which would be a bug in this
+    /// module, not a normal runtime error -- panics rather than returning a `Result`.
     pub fn decrypt(&self) -> SecretBytes {
         let aead = XChaCha20Poly1305::new(&AeadKey::from(*REST_KEY));
         let plaintext = aead

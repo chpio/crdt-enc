@@ -36,16 +36,16 @@ type Kek = AtRest;
 /// encrypts it with XChaCha20Poly1305. Every wrapped blob carries its own salt (and the Argon2
 /// parameters used), so it's independently unwrappable — no shared/pre-agreed salt between
 /// devices is needed. Derived keys are cached per salt (Argon2 is deliberately slow, and
-/// `wrap_key`/`unwrap_key` can otherwise be called repeatedly for the same salt, e.g. once per
-/// `Core::read_remote_meta()` call), so it only runs again for a salt this instance hasn't seen
-/// before.
+/// [`Self::wrap_key`]/[`Self::unwrap_key`] can otherwise be called repeatedly for the same salt,
+/// e.g. once per [`crdt_enc::Core::read_remote_meta`] call), so it only runs again for a salt this
+/// instance hasn't seen before.
 ///
 /// The password is kept resident (encrypted at rest via [`AtRest`], decrypted only for the
 /// brief moment an Argon2 derivation actually needs it) for this value's entire lifetime, not just
-/// briefly at construction: `unwrap_key` must be able to derive the key for a salt it's never seen
-/// before at any time (e.g. a new device joining sync later with its own independently-bootstrapped
-/// entry), so there's no point at which it's safe to assume the password is no longer needed. See
-/// `todo.md` for ideas on reducing this exposure further.
+/// briefly at construction: [`Self::unwrap_key`] must be able to derive the key for a salt it's
+/// never seen before at any time (e.g. a new device joining sync later with its own
+/// independently-bootstrapped entry), so there's no point at which it's safe to assume the password
+/// is no longer needed. See `todo.md` for ideas on reducing this exposure further.
 #[derive(Debug)]
 pub struct PasswordKeySlot {
     /// The password, encrypted at rest -- see the struct doc comment.
@@ -56,23 +56,23 @@ pub struct PasswordKeySlot {
     t_cost: u32,
     /// Argon2id parallelism for keys this instance derives.
     p_cost: u32,
-    /// Derived keys seen so far, keyed by salt, for `unwrap_key` -- and, via `own_salt_kek`, also
-    /// the source `wrap_key` uses to converge on a single shared salt across devices instead of
-    /// each independently minting its own.
+    /// Derived keys seen so far, keyed by salt, for [`Self::unwrap_key`] -- and, via
+    /// [`Self::own_salt_kek`], also the source [`Self::wrap_key`] uses to converge on a single
+    /// shared salt across devices instead of each independently minting its own.
     unwrap_cache: LockBox<HashMap<[u8; SALT_LEN], Kek>>,
 }
 
 impl PasswordKeySlot {
-    /// Creates a `PasswordKeySlot` using the OWASP-recommended minimum Argon2id parameters (19456
-    /// KiB memory cost, 2 iterations, parallelism 1). Takes the password as an already-encrypted
-    /// [`AtRest`] rather than a plaintext string -- encrypt it at rest as early as possible
-    /// at the call site (e.g. right after reading it from stdin/a prompt), so it's never a plain
-    /// `String` inside this crate at all.
+    /// Creates a [`PasswordKeySlot`] using the OWASP-recommended minimum Argon2id parameters
+    /// (19456 KiB memory cost, 2 iterations, parallelism 1). Takes the password as an
+    /// already-encrypted [`AtRest`] rather than a plaintext string -- encrypt it at rest as early
+    /// as possible at the call site (e.g. right after reading it from stdin/a prompt), so it's
+    /// never a plain `String` inside this crate at all.
     pub fn new(password: AtRest) -> PasswordKeySlot {
         Self::with_params(password, 19_456, 2, 1)
     }
 
-    /// Creates a `PasswordKeySlot` with explicit Argon2id parameters (memory cost in KiB, time
+    /// Creates a [`PasswordKeySlot`] with explicit Argon2id parameters (memory cost in KiB, time
     /// cost, parallelism). The chosen parameters are stored alongside each wrapped key, so
     /// changing them later doesn't break unwrapping keys wrapped with the old parameters. See
     /// [`Self::new`] on why `password` is an already-encrypted [`AtRest`].
@@ -86,18 +86,19 @@ impl PasswordKeySlot {
         }
     }
 
-    /// Returns the (salt, derived key) pair `wrap_key` should use: the lexicographically smallest
-    /// salt already known via `unwrap_cache` (e.g. from decoding another device's entry during
-    /// the `set_remote_meta` merge that precedes this call, same min-by-id tiebreak philosophy as
-    /// `Keys::latest_key()`), so devices converge on one shared salt instead of each picking their
-    /// own. Only mints a genuinely fresh salt if none is known yet (true first-ever bootstrap).
+    /// Returns the (salt, derived key) pair [`Self::wrap_key`] should use: the lexicographically
+    /// smallest salt already known via `unwrap_cache` (e.g. from decoding another device's entry
+    /// during the [`crdt_enc::protector::Protector::set_remote_meta`] merge that precedes this
+    /// call, same min-by-id tiebreak philosophy as `Keys::latest_key()`), so devices converge on
+    /// one shared salt instead of each picking their own. Only mints a genuinely fresh salt if none
+    /// is known yet (true first-ever bootstrap).
     ///
     /// Recomputed on every call rather than cached: since every derived key is immediately
     /// inserted into `unwrap_cache`, this only costs an Argon2 run the very first time (or if a
     /// still-smaller salt from another device shows up later, which is strictly an improvement,
     /// not a regression) -- there's no cheaper alternative to buy by freezing the decision, since
-    /// the cleartext password already has to stay resident for `unwrap_key`'s sake regardless (see
-    /// the struct doc comment).
+    /// the cleartext password already has to stay resident for [`Self::unwrap_key`]'s sake
+    /// regardless (see the struct doc comment).
     async fn own_salt_kek(&self) -> Result<([u8; SALT_LEN], Kek)> {
         if let Some(pair) = self.unwrap_cache.with(|cache| {
             cache
@@ -129,10 +130,10 @@ impl PasswordKeySlot {
 }
 
 impl KeySlotProtector for PasswordKeySlot {
-    /// Encrypts `key` with an Argon2id-derived key (see `own_salt_kek`) using XChaCha20Poly1305
-    /// with a fresh random nonce, and encodes the result -- salt, Argon2 parameters, nonce,
-    /// ciphertext -- as a self-describing `Envelope`, tagged with `ENVELOPE_VERSION` so the format
-    /// can evolve safely.
+    /// Encrypts `key` with an Argon2id-derived key (see `own_salt_kek`) using
+    /// XChaCha20Poly1305 with a fresh random nonce, and encodes the result -- salt, Argon2
+    /// parameters, nonce, ciphertext -- as a self-describing `Envelope`, tagged with
+    /// `ENVELOPE_VERSION` so the format can evolve safely.
     async fn wrap_key(&self, key: SecretBytes) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
@@ -170,8 +171,8 @@ impl KeySlotProtector for PasswordKeySlot {
 
     /// Parses `wrapped` as an `Envelope`, derives (or looks up in `unwrap_cache`) the key for its
     /// salt/parameters, and decrypts it. Fails if the envelope can't be parsed, its version tag
-    /// doesn't match `ENVELOPE_VERSION`, its nonce is the wrong length, or decryption fails (wrong
-    /// password or tampered data).
+    /// doesn't match `ENVELOPE_VERSION`, its nonce is the wrong length, or decryption fails
+    /// (wrong password or tampered data).
     async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<SecretBytes> {
         let version_box =
             VersionBytesRef::deserialize(&wrapped).context("failed to parse password envelope")?;
@@ -217,7 +218,7 @@ impl KeySlotProtector for PasswordKeySlot {
     }
 }
 
-/// Derives a `KEK_LEN`-byte key-encryption key from `password` and `salt` via Argon2id. Decrypts
+/// Derives a [`KEK_LEN`]-byte key-encryption key from `password` and `salt` via Argon2id. Decrypts
 /// `password` itself, right before actually hashing it, rather than requiring callers to have
 /// already exposed it.
 fn derive_kek(
@@ -241,7 +242,8 @@ fn derive_kek(
 
 /// A self-describing wrapped key: everything needed to re-derive the same key-encryption key and
 /// decrypt the ciphertext travels alongside it, so no shared/pre-agreed salt between devices is
-/// needed. Wrapped in an outer `VersionBytesRef`/`ENVELOPE_VERSION` tag by `wrap_key`/`unwrap_key`.
+/// needed. Wrapped in an outer [`VersionBytesRef`]/[`ENVELOPE_VERSION`] tag by
+/// [`PasswordKeySlot::wrap_key`]/[`PasswordKeySlot::unwrap_key`].
 #[derive(Serialize, Deserialize, Debug)]
 struct Envelope {
     /// The Argon2 salt used to derive the key-encryption key.

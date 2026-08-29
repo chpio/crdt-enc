@@ -133,3 +133,13 @@ There is no CI config and no linter beyond `cargo fmt`/`cargo check` in this rep
 [docs/todo.md](docs/todo.md) tracks known rough edges the maintainer is aware of — check it before assuming an
 `unwrap()`, missing validation, or stubbed encryption is an oversight to silently fix rather than
 known, intentionally-deferred work.
+
+## Linking types in doc comments
+
+Whenever a `///`/`//!` doc comment mentions a specific named type, trait, struct, enum, or function —
+whether defined in this crate, another crate in the workspace, the standard library (`Vec`, `Option`,
+`Arc`, …), or an external dependency (e.g. `` [`bytes::Buf`] ``) — use a rustdoc intra-doc link instead
+of a plain code-span backtick, so rustdoc renders it as a clickable link to the item's definition:
+`` [`VersionBytesRef`] `` rather than `` `VersionBytesRef` ``. This applies to every crate in the
+workspace. Plain backticks stay fine only for things that aren't a specific linkable item at all —
+method/field names used generically rather than naming a specific item, expressions, file paths, etc.

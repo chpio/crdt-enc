@@ -11,23 +11,23 @@ use ::std::{
 };
 use ::uuid::Uuid;
 
-/// The set of every content-encryption key this device knows about (an `Orswot`, so keys are never
+/// The set of every content-encryption key this device knows about (an [`Orswot`], so keys are never
 /// truly removed, only added -- old keys stay around so content encrypted with them stays readable),
-/// plus which one is current (`latest_key_id`, an `MVReg`). Converges via `Key: Ord`'s min-by-id
-/// tiebreak when multiple actors concurrently create the first key before ever syncing.
+/// plus which one is current (`latest_key_id`, an [`MVReg`]). Converges via [`Key`]: [`Ord`]'s
+/// min-by-id tiebreak when multiple actors concurrently create the first key before ever syncing.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Keys {
     /// The id of the key new content should be encrypted with, as seen by this device.
     latest_key_id: MVReg<Uuid, Uuid>,
-    /// Every key this device has ever learned about, keyed by `Key::id` (via `Borrow<Uuid>`).
+    /// Every key this device has ever learned about, keyed by [`Key::id`] (via `Borrow<Uuid>`).
     keys: Orswot<Key, Uuid>,
 }
 
 impl CvRDT for Keys {
-    /// Merging two `Keys` can never fail.
+    /// Merging two [`Keys`] can never fail.
     type Validation = Infallible;
 
-    /// Always succeeds; see `Validation`.
+    /// Always succeeds; see [`Validation`](Self::Validation).
     fn validate_merge(&self, _other: &Self) -> Result<(), Infallible> {
         Ok(())
     }
@@ -50,8 +50,8 @@ impl Keys {
     /// If `latest_key_id` concurrently holds more than one value (two devices bootstrapped or
     /// rotated at the same time before syncing), deterministically picks the smallest by id so
     /// every device converges on the same answer. Panics if `latest_key_id` names a key that isn't
-    /// in `keys` -- a bug in whatever inserted it, since `insert_latest_key` always adds both
-    /// together.
+    /// in `keys` -- a bug in whatever inserted it, since [`Self::insert_latest_key`] always adds
+    /// both together.
     pub fn latest_key(&self) -> Option<Key> {
         let mut keys = self.keys.read().val;
         self.latest_key_id
@@ -82,7 +82,8 @@ impl Keys {
 
 /// One content-encryption key: a random id (stable across rotations, used to tag encrypted content
 /// so it stays decryptable after a later rotation) plus the raw key bytes -- kept encrypted at rest
-/// under `REST_KEY` while held in memory, decrypted only for the brief moment `Key::key` is called.
+/// under `REST_KEY` while held in memory, decrypted only for the brief moment [`Self::key`] is
+/// called.
 #[derive(Clone, Debug)]
 pub struct Key {
     /// This key's id.
@@ -112,37 +113,38 @@ impl Key {
 
     /// The raw key bytes, decrypted from their at-rest encryption, paired with their version tag.
     ///
-    /// Returned as a pair rather than a `VersionBytes` because that type carries its content in a
+    /// Returned as a pair rather than a [`VersionBytes`] because that type carries its content in a
     /// plain `Vec<u8>`: assembling one here would copy the raw key into a buffer nothing zeroizes,
     /// on every call, only for the caller to split it apart again. The tag is not sensitive, so it
-    /// travels alongside the protected bytes instead of inside them -- the same split `AtRestKey`
+    /// travels alongside the protected bytes instead of inside them -- the same split [`AtRestKey`]
     /// already uses at rest.
     pub fn key(&self) -> (Uuid, SecretBytes) {
         self.key.decrypt()
     }
 }
 
-/// Wire-format mirror of `Key`, used only by `Key`'s hand-written `Serialize`/`Deserialize` --
-/// `Key`'s own fields hold the at-rest-encrypted form, which is process-local and must never be
-/// what's actually sent over the wire/stored in the synced `Keys` CRDT.
+/// Wire-format mirror of [`Key`], used only by [`Key`]'s hand-written [`Serialize`]/[`Deserialize`]
+/// -- [`Key`]'s own fields hold the at-rest-encrypted form, which is process-local and must never be
+/// what's actually sent over the wire/stored in the synced [`Keys`] CRDT.
 ///
 /// Generic over how the key bytes are carried so that serializing can borrow them straight out of
-/// a [`SecretBytes`] (`VersionBytesRef`) while deserializing owns them (`VersionBytes`). Both encode
-/// identically -- a version tag followed by the raw bytes -- so the wire format does not depend on
-/// which side is in play; keeping it one struct keeps that shape defined in a single place.
+/// a [`SecretBytes`] ([`VersionBytesRef`]) while deserializing owns them ([`VersionBytes`]). Both
+/// encode identically -- a version tag followed by the raw bytes -- so the wire format does not
+/// depend on which side is in play; keeping it one struct keeps that shape defined in a single
+/// place.
 #[derive(Serialize, Deserialize)]
 struct KeyWire<K> {
-    /// See `Key::id`.
+    /// See [`Key::id`].
     id: Uuid,
-    /// See `Key::key`.
+    /// See [`Key::key`].
     key: K,
 }
 
 impl Serialize for Key {
-    /// Decrypts the at-rest-encrypted key material and serializes it via `KeyWire`, borrowing the
-    /// bytes out of the `SecretBytes` rather than copying them into an owned buffer first: such a
-    /// copy would hold the raw key and, being a plain `Vec`, would go back to the allocator
-    /// uncleared -- once per key in the set, every time `Keys` is serialized.
+    /// Decrypts the at-rest-encrypted key material and serializes it via [`KeyWire`], borrowing the
+    /// bytes out of the [`SecretBytes`] rather than copying them into an owned buffer first: such a
+    /// copy would hold the raw key and, being a plain [`Vec`], would go back to the allocator
+    /// uncleared -- once per key in the set, every time [`Keys`] is serialized.
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let (version, key) = self.key();
         KeyWire {
@@ -154,8 +156,8 @@ impl Serialize for Key {
 }
 
 impl<'de> Deserialize<'de> for Key {
-    /// Deserializes via `KeyWire`, then re-encrypts the key material at rest. The buffer msgpack
-    /// decoded into is moved into `SecretBytes` rather than copied, so it zeroizes on drop instead
+    /// Deserializes via [`KeyWire`], then re-encrypts the key material at rest. The buffer msgpack
+    /// decoded into is moved into [`SecretBytes`] rather than copied, so it zeroizes on drop instead
     /// of being handed back to the allocator holding a content key.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         let wire = KeyWire::<VersionBytes>::deserialize(deserializer)?;
@@ -188,22 +190,22 @@ impl AtRestKey {
         }
     }
 
-    /// Reverses `encrypt`. Costs no copy: `AtRest::decrypt` already allocates a fresh
-    /// `SecretBytes`, and the tag is just read back out.
+    /// Reverses [`Self::encrypt`]. Costs no copy: [`AtRest::decrypt`] already allocates a fresh
+    /// [`SecretBytes`], and the tag is just read back out.
     fn decrypt(&self) -> (Uuid, SecretBytes) {
         (self.version, self.content.decrypt())
     }
 }
 
 impl Borrow<Uuid> for Key {
-    /// Lets `Orswot<Key, Uuid>` look keys up by id without needing a whole `Key` to hash/compare.
+    /// Lets `Orswot<Key, Uuid>` look keys up by id without needing a whole [`Key`] to hash/compare.
     fn borrow(&self) -> &Uuid {
         &self.id
     }
 }
 
 impl Hash for Key {
-    /// Hashes only the id, consistent with `Eq`/`Borrow<Uuid>`.
+    /// Hashes only the id, consistent with [`Eq`]/`Borrow<Uuid>`.
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
@@ -220,14 +222,14 @@ impl PartialEq for Key {
 impl Eq for Key {}
 
 impl PartialOrd for Key {
-    /// See `Ord`.
+    /// See [`Ord`].
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.id.partial_cmp(&other.id)
     }
 }
 
 impl Ord for Key {
-    /// Orders keys by id -- the deterministic tiebreak `Keys::latest_key` uses when multiple keys
+    /// Orders keys by id -- the deterministic tiebreak [`Keys::latest_key`] uses when multiple keys
     /// are concurrently marked latest.
     fn cmp(&self, other: &Self) -> Ordering {
         self.id.cmp(&other.id)

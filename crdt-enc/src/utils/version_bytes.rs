@@ -37,8 +37,8 @@ impl std::error::Error for VersionError {}
 /// A UUID version tag prepended to an owned byte blob, used everywhere data is serialized so
 /// on-disk/on-wire formats can evolve safely: readers check the tag via `ensure_version`/
 /// `ensure_versions`/`ensure_versions_phf` before attempting to deserialize the content. See
-/// `VersionBytesRef` for the borrowed counterpart and `VersionBytesBuf` for a zero-copy `bytes::Buf`
-/// view over either.
+/// [`VersionBytesRef`] for the borrowed counterpart and [`VersionBytesBuf`] for a zero-copy
+/// [`bytes::Buf`] view over either.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VersionBytes(Uuid, #[serde(with = "serde_bytes")] Vec<u8>);
 
@@ -63,7 +63,7 @@ impl VersionBytes {
         self.as_version_bytes_ref().ensure_versions(versions)
     }
 
-    /// Fails unless `self.version()` is a member of the `phf::Set` `versions` (e.g. a crate's
+    /// Fails unless `self.version()` is a member of the [`phf::Set`] `versions` (e.g. a crate's
     /// `SUPPORTED_VERSIONS` constant).
     ///
     /// ```
@@ -90,17 +90,17 @@ impl VersionBytes {
         self.as_version_bytes_ref().ensure_versions_phf(versions)
     }
 
-    /// Borrows this value as a `VersionBytesRef`.
+    /// Borrows this value as a [`VersionBytesRef`].
     pub fn as_version_bytes_ref(&self) -> VersionBytesRef<'_> {
         VersionBytesRef::new(self.version(), self.as_ref())
     }
 
-    /// A zero-copy `bytes::Buf` view over the version tag followed by the content.
+    /// A zero-copy [`bytes::Buf`] view over the version tag followed by the content.
     pub fn buf(&self) -> VersionBytesBuf<'_> {
         VersionBytesBuf::new(self.version(), self.as_ref())
     }
 
-    /// Parses a version tag plus content back out of `serialize`'s output.
+    /// Parses a version tag plus content back out of [`Self::serialize`]'s output.
     pub fn deserialize(slice: &[u8]) -> Result<VersionBytes, DeserializeError> {
         Ok(VersionBytesRef::deserialize(slice)?.into())
     }
@@ -119,7 +119,7 @@ impl From<VersionBytes> for Vec<u8> {
 }
 
 impl From<VersionBytesRef<'_>> for VersionBytes {
-    /// Copies the borrowed content into an owned `VersionBytes`.
+    /// Copies the borrowed content into an owned [`VersionBytes`].
     fn from(v: VersionBytesRef<'_>) -> VersionBytes {
         VersionBytes::new(v.version(), v.into())
     }
@@ -132,7 +132,7 @@ impl AsRef<[u8]> for VersionBytes {
     }
 }
 
-/// The borrowed (or copy-on-write) counterpart of `VersionBytes` -- avoids an owned copy when the
+/// The borrowed (or copy-on-write) counterpart of [`VersionBytes`] -- avoids an owned copy when the
 /// content is already available as a borrowed slice, e.g. right after loading a blob from storage.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VersionBytesRef<'a>(
@@ -177,7 +177,7 @@ impl<'a> VersionBytesRef<'a> {
         }
     }
 
-    /// Fails unless `self.version()` is a member of the `phf::Set` `versions` (e.g. a crate's
+    /// Fails unless `self.version()` is a member of the [`phf::Set`] `versions` (e.g. a crate's
     /// `SUPPORTED_VERSIONS` constant).
     ///
     /// ```
@@ -211,12 +211,13 @@ impl<'a> VersionBytesRef<'a> {
         }
     }
 
-    /// A zero-copy `bytes::Buf` view over the version tag followed by the content.
+    /// A zero-copy [`bytes::Buf`] view over the version tag followed by the content.
     pub fn buf(&self) -> VersionBytesBuf<'_> {
         VersionBytesBuf::new(self.version(), self.as_ref())
     }
 
-    /// Parses a version tag plus content back out of `serialize`'s output, borrowing from `slice`.
+    /// Parses a version tag plus content back out of [`Self::serialize`]'s output, borrowing from
+    /// `slice`.
     pub fn deserialize(slice: &'a [u8]) -> Result<VersionBytesRef<'a>, DeserializeError> {
         if slice.len() < VERSION_LEN {
             return Err(DeserializeError::InvalidLength);
@@ -261,7 +262,7 @@ impl<'a> From<VersionBytesRef<'a>> for Vec<u8> {
 }
 
 impl<'a> From<&'a VersionBytes> for VersionBytesRef<'a> {
-    /// Borrows an owned `VersionBytes`'s content instead of copying it.
+    /// Borrows an owned [`VersionBytes`]'s content instead of copying it.
     fn from(v: &'a VersionBytes) -> VersionBytesRef<'a> {
         VersionBytesRef::new(v.version(), v.as_ref())
     }
@@ -274,8 +275,8 @@ impl<'a> AsRef<[u8]> for VersionBytesRef<'a> {
     }
 }
 
-/// The error returned by `VersionBytes::deserialize`/`VersionBytesRef::deserialize` when the input
-/// is too short to even contain a version tag.
+/// The error returned by [`VersionBytes::deserialize`]/[`VersionBytesRef::deserialize`] when the
+/// input is too short to even contain a version tag.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum DeserializeError {
@@ -292,11 +293,11 @@ impl fmt::Display for DeserializeError {
 
 impl std::error::Error for DeserializeError {}
 
-/// The byte length of a serialized `Uuid` version tag.
+/// The byte length of a serialized [`Uuid`] version tag.
 const VERSION_LEN: usize = 16;
 
-/// A zero-copy `bytes::Buf` view over a version tag followed by borrowed content, without having to
-/// first concatenate them into one contiguous buffer.
+/// A zero-copy [`bytes::Buf`] view over a version tag followed by borrowed content, without having
+/// to first concatenate them into one contiguous buffer.
 #[derive(Debug, Clone)]
 pub struct VersionBytesBuf<'a> {
     /// The current read position, counted from the start of the version tag (i.e. spans both the

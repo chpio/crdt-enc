@@ -27,18 +27,18 @@ use ::std::{borrow::Cow, fmt::Debug, future::Future, mem, pin::Pin};
 use ::tokio::task::spawn_blocking;
 use ::uuid::Uuid;
 
-/// The `Keys`/`Key` CRDT types backing the rotating content-encryption key, private to this crate --
-/// see `EnvelopeProtector`'s use of them.
+/// The [`Keys`]/[`Key`] CRDT types backing the rotating content-encryption key, private to this
+/// crate -- see [`EnvelopeProtector`]'s use of them.
 mod keys;
 /// Reusable helpers shared across this crate and its implementors: [`utils::AtRest`] for encrypting
 /// a secret while it sits idle in memory, and [`utils::SecretBytes`] for the moments it has to be
 /// readable.
 pub mod utils;
 
-/// version of the outer sync envelope holding the (wrapped) `Keys` CRDT
+/// version of the outer sync envelope holding the (wrapped) [`Keys`] CRDT
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0x_59b8c30c_f4b0_405b_acf1_9e2202665dbf);
 
-/// The set of `CURRENT_VERSION`-style outer sync-envelope versions this build can still read.
+/// The set of [`CURRENT_VERSION`]-style outer sync-envelope versions this build can still read.
 static SUPPORTED_VERSIONS: phf::Set<u128> = phf::phf_set! {
     // current
     0x_59b8c30c_f4b0_405b_acf1_9e2202665dbf_u128,
@@ -65,48 +65,48 @@ where
     /// password-derived key). Takes `key` owned since every caller already owns it (it's freshly
     /// serialized/generated), letting implementations avoid an otherwise-pointless internal clone.
     /// Takes [`SecretBytes`] since `key` is itself unprotected plaintext key material (the
-    /// counterpart of `unwrap_key`'s `SecretBytes` return).
+    /// counterpart of [`Self::unwrap_key`]'s [`SecretBytes`] return).
     fn wrap_key(&self, key: SecretBytes) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
     /// Reverses [`wrap_key`](KeySlotProtector::wrap_key), recovering the original key bytes.
     /// Should fail (`Err`) rather than return garbage if `wrapped` can't be
     /// authenticated/decrypted (e.g. wrong password, tampered data). Takes `wrapped` owned for the
-    /// same reason as `wrap_key`'s `key`. Returns [`SecretBytes`] since this is the
+    /// same reason as [`Self::wrap_key`]'s `key`. Returns [`SecretBytes`] since this is the
     /// freshly-recovered plaintext key material.
     fn unwrap_key(&self, wrapped: Vec<u8>) -> impl Future<Output = Result<SecretBytes>> + Send;
 }
 
-/// `EnvelopeProtector`'s mutable in-process state, guarded together so it's always mutated/read as
+/// [`EnvelopeProtector`]'s mutable in-process state, guarded together so it's always mutated/read as
 /// one consistent snapshot.
 #[derive(Debug)]
 struct MutData {
-    /// The handle back into the owning `Core`, set once by `Protector::init`; `None` only before
-    /// that.
+    /// The handle back into the owning [`crdt_enc::Core`], set once by [`Protector::init`]; `None`
+    /// only before that.
     core: Option<Box<dyn CoreSubHandle>>,
-    /// This device's merged view of the synced (wrapped) `Keys` CRDT, as raw registers -- decoded
-    /// into `keys` via `key_slot.unwrap_key`.
+    /// This device's merged view of the synced (wrapped) [`Keys`] CRDT, as raw registers -- decoded
+    /// into `keys` via [`KeySlotProtector::unwrap_key`].
     remote_meta: MVReg<VersionBytes, Uuid>,
     /// This device's merged, decoded view of every known content-encryption key.
     keys: Keys,
 }
 
 /// A [`Protector`] implementing "envelope encryption": content is protected by a random, rotatable
-/// content-encryption key, which is itself protected by a `KeySlotProtector` (e.g. a password or GPG
-/// recipients). Manages the `Keys` CRDT (rotation, cross-device convergence) itself, so `KS` only ever
-/// needs to wrap/unwrap a single small key blob.
+/// content-encryption key, which is itself protected by a [`KeySlotProtector`] (e.g. a password or
+/// GPG recipients). Manages the `Keys` CRDT (rotation, cross-device convergence) itself, so `KS`
+/// only ever needs to wrap/unwrap a single small key blob.
 #[derive(Debug)]
 pub struct EnvelopeProtector<KS> {
     key_slot: KS,
     data: LockBox<MutData>,
     /// Guards every "read current keys, add a new one, publish it" sequence (initial bootstrap
-    /// and, later, `rotate_key`), so two such sequences racing for the same actor can never
-    /// derive colliding CRDT dots (which would otherwise silently drop one of the two keys, or
-    /// worse, trigger the `panic!` in `Keys::latest_key`).
+    /// and, later, [`EnvelopeProtector::rotate_key`]), so two such sequences racing for the same
+    /// actor can never derive colliding CRDT dots (which would otherwise silently drop one of the
+    /// two keys, or worse, trigger the `panic!` in [`Keys::latest_key`]).
     key_write_lock: AsyncMutex<()>,
 }
 
 impl<KS> EnvelopeProtector<KS> {
-    /// Creates a new `EnvelopeProtector` with no content key yet — one is bootstrapped
+    /// Creates a new [`EnvelopeProtector`] with no content key yet — one is bootstrapped
     /// automatically (via `key_slot`) the first time it's used with [`crdt_enc::Core::open`].
     pub fn new(key_slot: KS) -> EnvelopeProtector<KS> {
         EnvelopeProtector {
@@ -122,8 +122,8 @@ impl<KS> EnvelopeProtector<KS> {
 }
 
 impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
-    /// Stores a clone of `core`, used later by `set_remote_meta` to push a newly-bootstrapped
-    /// content key back for syncing.
+    /// Stores a clone of `core`, used later by [`Self::set_remote_meta`] to push a
+    /// newly-bootstrapped content key back for syncing.
     async fn init(&self, core: &dyn CoreSubHandle) -> Result<()> {
         self.data.with(|data| {
             data.core = Some(dyn_clone::clone_box(core));
@@ -133,10 +133,10 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
     }
 
     /// Merges in newly-synced key material, decoding each device's wrapped copy of the content
-    /// key via `key_slot.unwrap_key`. If no content key exists anywhere yet, generates one,
-    /// protects it via `key_slot.wrap_key`, and syncs it back to `core`. If multiple devices
-    /// independently bootstrap a key before ever syncing with each other, they converge
-    /// afterwards via `Keys::latest_key()`'s min-by-id tiebreak.
+    /// key via [`KeySlotProtector::unwrap_key`]. If no content key exists anywhere yet, generates
+    /// one, protects it via [`KeySlotProtector::wrap_key`], and syncs it back to `core`. If
+    /// multiple devices independently bootstrap a key before ever syncing with each other, they
+    /// converge afterwards via `Keys::latest_key()`'s min-by-id tiebreak.
     async fn set_remote_meta(
         &self,
         new_remote_meta: Option<MVReg<VersionBytes, Uuid>>,
@@ -170,9 +170,9 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
     }
 
     /// Encrypts `clear_text` with the current content key (XChaCha20Poly1305, random nonce),
-    /// tagging the ciphertext with that key's id (in a versioned `EncBox`) so `decrypt` can look
-    /// up the exact same key later even after a rotation. Fails if no content key has been
-    /// established yet (see `set_remote_meta`).
+    /// tagging the ciphertext with that key's id (in a versioned `EncBox`) so [`Self::decrypt`]
+    /// can look up the exact same key later even after a rotation. Fails if no content key has
+    /// been established yet (see [`Self::set_remote_meta`]).
     async fn encrypt(&self, clear_text: SecretBytes) -> Result<Vec<u8>> {
         let key = self
             .data
@@ -214,7 +214,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
         .await?
     }
 
-    /// Reverses `encrypt`. Looks up the specific key the ciphertext was tagged with (not
+    /// Reverses [`Self::encrypt`]. Looks up the specific key the ciphertext was tagged with (not
     /// necessarily the current latest one, e.g. after a rotation) via `Keys::get_key`. Fails if
     /// that key is unknown, the ciphertext was tampered with, or authentication fails.
     async fn decrypt(&self, enc_data: Vec<u8>) -> Result<SecretBytes> {
@@ -256,10 +256,10 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
 }
 
 impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
-    /// Generates a fresh content key, protects it via `key_slot.wrap_key`, and publishes it as
-    /// the new latest key. Old keys are never removed from the `Keys` CRDT, so content encrypted
-    /// with them (tagged with their id, see `encrypt`) remains decryptable via `decrypt`'s
-    /// `Keys::get_key` lookup.
+    /// Generates a fresh content key, protects it via [`KeySlotProtector::wrap_key`], and
+    /// publishes it as the new latest key. Old keys are never removed from the `Keys` CRDT, so
+    /// content encrypted with them (tagged with their id, see [`Protector::encrypt`]) remains
+    /// decryptable via [`Protector::decrypt`]'s `Keys::get_key` lookup.
     pub async fn rotate_key(&self) -> Result<()> {
         let core = self.data.try_with(|data| {
             Ok(dyn_clone::clone_box(
@@ -270,17 +270,18 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
         self.publish_new_key(core, false).await
     }
 
-    /// Shared implementation behind the initial key bootstrap (`set_remote_meta`, with
-    /// `only_if_missing: true`) and `rotate_key` (`only_if_missing: false`). Everything here runs
-    /// under `key_write_lock`, re-reading `data.remote_meta`/`data.keys` fresh after acquiring
-    /// it, so two concurrent calls (e.g. two overlapping `rotate_key`s) can never derive
-    /// colliding CRDT dots for the same actor.
+    /// Shared implementation behind the initial key bootstrap ([`Protector::set_remote_meta`],
+    /// with `only_if_missing: true`) and [`Self::rotate_key`] (`only_if_missing: false`).
+    /// Everything here runs under `key_write_lock`, re-reading `data.remote_meta`/`data.keys`
+    /// fresh after acquiring it, so two concurrent calls (e.g. two overlapping
+    /// [`Self::rotate_key`]s) can never derive colliding CRDT dots for the same actor.
     ///
     /// Returns a boxed future (rather than a plain `async fn`/`-> impl Future`) because this
-    /// method and `Protector::set_remote_meta` call each other (this loops back through
-    /// `set_remote_meta` below; `set_remote_meta`'s bootstrap branch calls this) -- two mutually
-    /// recursive opaque `-> impl Future` return types can't be resolved (a compile-time cycle),
-    /// so one side needs an explicit, non-opaque return type to break it.
+    /// method and [`Protector::set_remote_meta`] call each other (this loops back through
+    /// [`Protector::set_remote_meta`] below; [`Protector::set_remote_meta`]'s bootstrap branch
+    /// calls this) -- two mutually recursive opaque `-> impl Future` return types can't be
+    /// resolved (a compile-time cycle), so one side needs an explicit, non-opaque return type to
+    /// break it.
     fn publish_new_key(
         &self,
         core: Box<dyn CoreSubHandle>,
@@ -349,12 +350,12 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
 }
 
 /// One piece of content encrypted with one content-encryption key: which key (by id), the random
-/// nonce used, and the ciphertext. Wrapped in an outer `VersionBytesRef`/`DATA_VERSION` tag by
-/// `Protector::encrypt`/`Protector::decrypt`.
+/// nonce used, and the ciphertext. Wrapped in an outer [`VersionBytesRef`]/[`DATA_VERSION`] tag by
+/// [`Protector::encrypt`]/[`Protector::decrypt`].
 #[derive(Serialize, Deserialize, Debug)]
 struct EncBox<'a> {
     /// Which content-encryption key (by [`Key::id`]) `enc_data` was encrypted with -- looked up via
-    /// `Keys::get_key` on decrypt, so content stays readable across a key rotation.
+    /// [`Keys::get_key`] on decrypt, so content stays readable across a key rotation.
     key_id: Uuid,
 
     /// The random XChaCha20Poly1305 nonce used for this one encryption.
