@@ -278,21 +278,28 @@ async fn state_load_reports_missing_and_unparsable_files() {
 }
 
 /// Content-addressed files are named by the hash of their content, so writing the same bytes twice
-/// targets a file that already exists -- and the write refuses to touch an existing blob. Pins
-/// current behaviour: the doc comment on `write_content_addressible_file` calls this case
-/// "naturally idempotent", which it is not.
+/// targets a file that already exists. That is a no-op, not a conflict -- the name already
+/// determines the content, so there is nothing the second write could add.
 #[tokio::test]
-async fn storing_byte_identical_content_twice_is_refused() {
+async fn storing_byte_identical_content_twice_is_a_no_op() {
     let tmp = tempfile::tempdir().unwrap();
     let (storage, _remote) = open(tmp.path());
 
-    storage.store_state(blob(b"identical")).await.unwrap();
-    let err = storage.store_state(blob(b"identical")).await.unwrap_err();
-    assert!(
-        err.to_string().contains("failed writing state file"),
-        "got: {}",
-        err
+    let first = storage.store_state(blob(b"identical")).await.unwrap();
+    let second = storage.store_state(blob(b"identical")).await.unwrap();
+
+    assert_eq!(first, second, "the same content must map to the same name");
+    assert_eq!(
+        storage.list_state_names().await.unwrap(),
+        vec![first],
+        "one name, one blob"
     );
+
+    // and the same holds for remote meta, which is where `Core` actually re-writes unchanged bytes
+    let first = storage.store_remote_meta(blob(b"same")).await.unwrap();
+    let second = storage.store_remote_meta(blob(b"same")).await.unwrap();
+    assert_eq!(first, second);
+    assert_eq!(storage.list_remote_meta_names().await.unwrap(), vec![first]);
 }
 
 /// A blob that can't be written at all (here: a `states` path that is a file) has to be reported,
@@ -637,6 +644,44 @@ async fn op_dir_that_cannot_be_created_is_reported() {
     assert!(
         err.to_string().contains("failed creating op dir"),
         "got: {}",
+        err
+    );
+}
+
+/// Accepting a repeat write must not swallow *other* write failures. `Core` treats a successful
+/// `store_state` as "the snapshot is durable" and goes straight on to delete the ops it superseded,
+/// so a blob that never landed has to be reported rather than reported as already-there.
+#[cfg(unix)]
+#[tokio::test]
+async fn storing_reports_a_write_failure_that_is_not_a_repeat() {
+    use ::std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (storage, remote) = open(tmp.path());
+
+    // the directory exists, so `create_dir_all` succeeds and the failure lands on the file write
+    let states = remote.join("states");
+    fs::create_dir_all(&states).await.unwrap();
+    fs::set_permissions(&states, Permissions::from_mode(0o555))
+        .await
+        .unwrap();
+
+    // root ignores the permission bits, so this scenario cannot be built there at all
+    if fs::write(states.join(".probe"), b"").await.is_ok() {
+        return;
+    }
+
+    let result = storage.store_state(blob(b"state")).await;
+
+    // restore before asserting, so a failure here doesn't leave an undeletable temp directory
+    fs::set_permissions(&states, Permissions::from_mode(0o755))
+        .await
+        .unwrap();
+
+    let err = result.unwrap_err();
+    assert!(
+        format!("{:#}", err).contains("content addressible"),
+        "got: {:#}",
         err
     );
 }

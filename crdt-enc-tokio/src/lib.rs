@@ -490,8 +490,11 @@ async fn read_file_optional(path: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 /// Writes `bytes` as a new immutable file under `dir_path`, named by the base32 encoding of its
-/// SHA3-256 hash (so writing the same content twice is naturally idempotent), and returns that
-/// name.
+/// SHA3-256 hash, and returns that name. Writing the same content twice is idempotent: the second
+/// call leaves the existing file untouched and returns the same name, since the name already
+/// determines the content. (It does *not* verify that the existing file is complete -- a write
+/// interrupted mid-way leaves a short file either way; see `write_file_inner`'s TODO about writing
+/// to a temporary file and renaming it into place.)
 async fn write_content_addressible_file(
     dir_path: &Path,
     bytes: &VersionBytesRef<'_>,
@@ -512,14 +515,19 @@ async fn write_content_addressible_file(
         .await
         .with_context(|| format!("failed creating dir {}", dir_path.display()))?;
     let file_path = dir_path.join(&block_id);
-    write_new_file(&file_path, bytes.buf())
-        .await
-        .with_context(|| {
+    match write_new_file(&file_path, bytes.buf()).await {
+        // the name *is* the hash of the content, so a file already sitting there holds exactly
+        // these bytes -- there is nothing to write. Callers legitimately produce identical content
+        // twice (a device republishing a `RemoteMeta` nothing has changed, say), and failing there
+        // would turn a no-op into an error.
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+        result => result.with_context(|| {
             format!(
                 "failed writing content addressible file {}",
                 file_path.display()
             )
-        })?;
+        })?,
+    }
     Ok(block_id)
 }
 
