@@ -347,6 +347,7 @@ where
 
         let (clear_text, states_to_remove, ops_to_remove) = self.data.try_with(|data| {
             let clear_text = rmp_serde::to_vec_named(&data.state)?;
+            let clear_text = VersionBytes::new(self.current_data_version, clear_text);
 
             let states_to_remove = data.read_states.iter().cloned().collect();
 
@@ -360,9 +361,9 @@ where
             Ok((clear_text, states_to_remove, ops_to_remove))
         })?;
 
-        let data_enc = self.protector.encrypt(clear_text).await?;
+        let data_enc = self.protector.encrypt(clear_text.serialize()).await?;
 
-        let enc_data = VersionBytes::new(self.current_data_version, data_enc);
+        let enc_data = VersionBytes::new(CURRENT_VERSION, data_enc);
 
         // first store new state
         let new_state_name = self.storage.store_state(enc_data).await?;
