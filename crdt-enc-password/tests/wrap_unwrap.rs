@@ -178,3 +178,58 @@ async fn instance_that_saw_a_wrap_converges_on_its_salt() {
     let salt_b: EnvelopeSalt = rmp_serde::from_slice(version_box_b.as_ref()).unwrap();
     assert_eq!(salt_a.salt, salt_b.salt);
 }
+
+/// `PasswordKeySlot::new` is what applications actually call -- `with_params` only exists so tests
+/// (and anyone with a considered reason) can pick cheaper Argon2 settings. This is the one test
+/// that pays the real OWASP-minimum derivation cost, to make sure the defaults it hard-codes are
+/// still accepted by `Params::new` and produce a working slot.
+#[tokio::test]
+async fn default_owasp_parameters_produce_a_working_slot() {
+    let key_slot = PasswordKeySlot::new(AtRest::encrypt("correct horse battery staple"));
+    let key = b"a fixed 32-byte content key !!!!";
+
+    let wrapped = key_slot
+        .wrap_key(SecretBytes::new(key.to_vec()))
+        .await
+        .unwrap();
+    let unwrapped = key_slot.unwrap_key(wrapped).await.unwrap();
+
+    assert_eq!(unwrapped.expose_secret(), key);
+}
+
+/// Argon2 rejects parameters outside its valid ranges (here: a memory cost below the minimum), and
+/// that has to surface as an error rather than a panic deep inside a `spawn_blocking`.
+#[tokio::test]
+async fn invalid_argon2_parameters_are_reported() {
+    let key_slot = PasswordKeySlot::with_params(AtRest::encrypt("a password"), 0, 0, 0);
+
+    key_slot
+        .wrap_key(SecretBytes::new(b"secret key bytes".to_vec()))
+        .await
+        .unwrap_err();
+}
+
+/// Anything that isn't one of this crate's envelopes has to be refused rather than parsed
+/// half-way. All three shapes are what a device would actually meet in the wild: a truncated file,
+/// a blob written by a future envelope format, and a corrupted body.
+#[tokio::test]
+async fn blobs_that_are_not_this_envelope_format_are_refused() {
+    // the envelope's own version tag, so a "wrong version" case can be built around it
+    const ENVELOPE_VERSION: ::uuid::Uuid =
+        ::uuid::Uuid::from_u128(0x_3dd69616_4892_4088_9143_c40025e6e11e);
+    const OTHER_VERSION: ::uuid::Uuid =
+        ::uuid::Uuid::from_u128(0x_00000000_0000_4000_8000_000000000000);
+
+    let key_slot = fast_key_slot("a password");
+
+    // too short to even hold a version tag
+    key_slot.unwrap_key(vec![0; 8]).await.unwrap_err();
+
+    // a version tag this build doesn't know
+    let wrong_version = ::crdt_enc::utils::VersionBytes::new(OTHER_VERSION, vec![0x80]).serialize();
+    key_slot.unwrap_key(wrong_version).await.unwrap_err();
+
+    // the right tag, but a body that isn't an `Envelope` (0xc1 is msgpack's "never used" byte)
+    let bad_body = ::crdt_enc::utils::VersionBytes::new(ENVELOPE_VERSION, vec![0xc1]).serialize();
+    key_slot.unwrap_key(bad_body).await.unwrap_err();
+}
