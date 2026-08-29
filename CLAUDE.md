@@ -28,10 +28,6 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
   - [protector.rs](crdt-enc/src/protector.rs) — `Protector` trait: `encrypt`/`decrypt` on opaque byte
     blobs, plus `init`/`set_remote_meta` lifecycle hooks. `Core` has no concept of "keys" at all — it's
     entirely up to the `Protector` implementation whether/how it manages key material.
-  - [keys.rs](crdt-enc/src/keys.rs) — `Keys`/`Key`: reusable CRDT machinery (an `Orswot` of `Key`s plus
-    a `latest_key_id` `MVReg`, converging via `Key: Ord` when multiple actors concurrently create the
-    first key before ever syncing) for `Protector` implementations that want key rotation. Not used by
-    `Core` itself — only by [crdt-enc-envelope](crdt-enc-envelope/).
   - [utils/](crdt-enc/src/utils/) — `VersionBytes`/`VersionBytesRef`/`VersionBytesBuf` (a UUID version
     tag prepended to a byte blob, used everywhere data is serialized so formats can evolve safely),
     `LockBox` (a sync-`Mutex` wrapper used to guard mutable state without holding a lock across
@@ -44,6 +40,20 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
   directly with XChaCha20-Poly1305 using the current key. Protecting that one content key is delegated to
   a generic `KeySlotProtector` sub-trait (`wrap_key`/`unwrap_key` on a raw key blob, no CRDT/sync
   concerns) — `EnvelopeProtector<KS>` is generic over it.
+  - [keys.rs](crdt-enc-envelope/src/keys.rs) — `Keys`/`Key`, the CRDT machinery behind that rotation:
+    an `Orswot` of `Key`s plus a `latest_key_id` `MVReg`, converging via `Key: Ord` when multiple
+    actors concurrently create the first key before ever syncing. A private module — `Core` knows
+    nothing about keys, and neither does any other crate.
+  - [utils/](crdt-enc-envelope/src/utils/) — `AtRest` (encrypts a secret under a random process-local
+    key while it sits idle in memory, so raw key material isn't scattered in plaintext across the
+    heap) and `SecretBytes` (plaintext secret bytes, zeroized on drop and redacted in `Debug`; its
+    `expose_secret`/`into_exposed_secret` are deliberately named methods rather than an
+    `AsRef`/`Deref` impl, so `grep -i expose` finds every place a secret is handed out in the clear).
+- [crdt-enc-password/](crdt-enc-password/) — a `KeySlotProtector` protecting the content key with a
+  password: an Argon2id-derived key encrypts it with XChaCha20-Poly1305. Every wrapped blob carries its
+  own salt and Argon2 parameters, so it's independently unwrappable without any pre-agreed salt between
+  devices — though instances converge on the lexicographically smallest salt they've seen so a shared
+  one wins over time. Derived keys are cached per salt, since Argon2 is deliberately slow.
 - [crdt-enc-tokio/](crdt-enc-tokio/) — a `Storage` implementation backed by the local filesystem via
   Tokio, using two directories: a `local_path` (device-local meta) and a `remote_path` (the
   syncthing-shared tree, subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`). Locks
