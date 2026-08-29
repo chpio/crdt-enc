@@ -1,4 +1,7 @@
-use crate::{CoreSubHandle, utils::VersionBytes};
+use crate::{
+    CoreSubHandle,
+    utils::{SecretBytes, VersionBytes},
+};
 use ::anyhow::Result;
 use ::crdts::MVReg;
 use ::std::{fmt::Debug, future::Future};
@@ -33,9 +36,14 @@ where
         async { Ok(()) }
     }
 
-    /// Protects one opaque blob before it's handed to `Storage` for persistence.
-    fn encrypt(&self, clear_text: Vec<u8>) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// Protects one opaque blob before it's handed to `Storage` for persistence. Takes
+    /// [`SecretBytes`] because this is the application's plaintext -- the very thing this crate
+    /// exists to keep off the sync transport -- so it is zeroized once dropped and redacted in
+    /// `Debug` rather than sitting in a bare `Vec<u8>`. The ciphertext coming back needs no such
+    /// treatment, which is why the return type is a plain `Vec<u8>`.
+    fn encrypt(&self, clear_text: SecretBytes) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
-    /// Reverses `encrypt`, recovering the original blob from what `Storage` returned.
-    fn decrypt(&self, enc_data: Vec<u8>) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// Reverses `encrypt`, recovering the original blob from what `Storage` returned. Mirrors
+    /// `encrypt`: ciphertext in as a plain `Vec<u8>`, plaintext out as [`SecretBytes`].
+    fn decrypt(&self, enc_data: Vec<u8>) -> impl Future<Output = Result<SecretBytes>> + Send;
 }

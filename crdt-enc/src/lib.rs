@@ -18,7 +18,7 @@ pub mod utils;
 use crate::{
     protector::Protector,
     storage::Storage,
-    utils::{LockBox, VersionBytes, VersionBytesRef},
+    utils::{LockBox, SecretBytes, VersionBytes, VersionBytesRef},
 };
 use ::anyhow::{Context, Error, Result};
 use ::async_trait::async_trait;
@@ -302,7 +302,10 @@ where
         let clear_text = rmp_serde::to_vec_named(&ops)?;
         let clear_text = VersionBytes::new(self.current_data_version, clear_text);
 
-        let data_enc = self.protector.encrypt(clear_text.serialize()).await?;
+        let data_enc = self
+            .protector
+            .encrypt(SecretBytes::new(clear_text.serialize()))
+            .await?;
 
         // TODO: add key id
         // let block = Block {
@@ -361,7 +364,10 @@ where
             Ok((clear_text, states_to_remove, ops_to_remove))
         })?;
 
-        let data_enc = self.protector.encrypt(clear_text.serialize()).await?;
+        let data_enc = self
+            .protector
+            .encrypt(SecretBytes::new(clear_text.serialize()))
+            .await?;
 
         let enc_data = VersionBytes::new(CURRENT_VERSION, data_enc);
 
@@ -431,7 +437,7 @@ where
                     .await
                     .with_context(|| format!("failed decrypting remote state {}", name))?;
 
-                let clear_text = VersionBytesRef::deserialize(&clear_text)?;
+                let clear_text = VersionBytesRef::deserialize(clear_text.expose_secret())?;
                 clear_text.ensure_versions(&self.supported_data_versions)?;
 
                 let state_wrapper: StateWrapper<S> = rmp_serde::from_slice(clear_text.as_ref())?;
@@ -488,7 +494,7 @@ where
                 data.ensure_versions_phf(&SUPPORTED_VERSIONS)?;
                 let clear_text = self.protector.decrypt(data.into()).await?;
 
-                let clear_text = VersionBytesRef::deserialize(&clear_text)?;
+                let clear_text = VersionBytesRef::deserialize(clear_text.expose_secret())?;
                 clear_text.ensure_versions(&self.supported_data_versions)?;
 
                 let ops: Vec<_> = rmp_serde::from_slice(clear_text.as_ref())?;

@@ -71,7 +71,10 @@ async fn a_protector_without_a_core_reports_it() {
 async fn encrypting_without_a_key_is_refused() {
     let protector = EnvelopeProtector::new(NoopKeySlot);
 
-    let err = protector.encrypt(b"secret".to_vec()).await.unwrap_err();
+    let err = protector
+        .encrypt(SecretBytes::new(b"secret".to_vec()))
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("no latest key"), "got: {}", err);
 }
 
@@ -96,7 +99,9 @@ async fn decrypting_something_that_is_not_a_content_envelope_is_refused() -> Res
 
     // well-formed, but tagged with a key this device has never seen -- what a device that hasn't
     // synced the latest key rotation yet is holding
-    let cipher = protector.encrypt(b"secret".to_vec()).await?;
+    let cipher = protector
+        .encrypt(SecretBytes::new(b"secret".to_vec()))
+        .await?;
     let mut tampered = decode_enc_box(&cipher);
     tampered.key_id = Uuid::new_v4();
     let err = protector
@@ -106,7 +111,7 @@ async fn decrypting_something_that_is_not_a_content_envelope_is_refused() -> Res
     assert!(err.to_string().contains("no key with id"), "got: {}", err);
 
     // ... and the untouched blob still round-trips
-    assert_eq!(protector.decrypt(cipher).await?, b"secret");
+    assert_eq!(protector.decrypt(cipher).await?.expose_secret(), b"secret");
 
     Ok(())
 }
@@ -120,7 +125,9 @@ async fn tampered_content_fails_to_decrypt() -> Result<()> {
     let core = open_core(tmp.path(), NoopKeySlot).await?;
     let protector = core.protector();
 
-    let cipher = protector.encrypt(b"secret".to_vec()).await?;
+    let cipher = protector
+        .encrypt(SecretBytes::new(b"secret".to_vec()))
+        .await?;
 
     let mut flipped = decode_enc_box(&cipher);
     *flipped.enc_data.last_mut().unwrap() ^= 0xFF;
@@ -263,7 +270,11 @@ async fn key_material_of_the_wrong_shape_is_refused() -> Result<()> {
         },
     )
     .await?;
-    let err = core.protector().encrypt(b"x".to_vec()).await.unwrap_err();
+    let err = core
+        .protector()
+        .encrypt(SecretBytes::new(b"x".to_vec()))
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("not matching key version"),
         "got: {}",
@@ -279,7 +290,11 @@ async fn key_material_of_the_wrong_shape_is_refused() -> Result<()> {
         },
     )
     .await?;
-    let err = core.protector().encrypt(b"x".to_vec()).await.unwrap_err();
+    let err = core
+        .protector()
+        .encrypt(SecretBytes::new(b"x".to_vec()))
+        .await
+        .unwrap_err();
     assert!(
         err.to_string().contains("Invalid key length"),
         "got: {}",
@@ -320,7 +335,7 @@ async fn a_device_whose_key_material_is_broken_cannot_decrypt() -> Result<()> {
             .await?;
         let cipher = writer
             .protector()
-            .encrypt(b"perfectly good ciphertext".to_vec())
+            .encrypt(SecretBytes::new(b"perfectly good ciphertext".to_vec()))
             .await?;
 
         // a second device on the same tree, whose key slot hands back broken key material

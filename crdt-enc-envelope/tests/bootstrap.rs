@@ -189,12 +189,12 @@ async fn devices_that_bootstrapped_in_isolation_converge_on_one_key() -> Result<
 struct PassThrough;
 
 impl Protector for PassThrough {
-    async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(clear_text)
+    async fn encrypt(&self, clear_text: SecretBytes) -> Result<Vec<u8>> {
+        Ok(clear_text.expose_secret().to_vec())
     }
 
-    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(enc_data)
+    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<SecretBytes> {
+        Ok(SecretBytes::new(enc_data))
     }
 }
 
@@ -277,8 +277,10 @@ async fn a_second_bootstrap_backs_out_once_the_first_has_published() -> Result<(
     );
 
     // and the protector is left in a usable state, with exactly that one key
-    let cipher = protector.encrypt(b"hello".to_vec()).await?;
-    assert_eq!(protector.decrypt(cipher).await?, b"hello");
+    let cipher = protector
+        .encrypt(SecretBytes::new(b"hello".to_vec()))
+        .await?;
+    assert_eq!(protector.decrypt(cipher).await?.expose_secret(), b"hello");
 
     Ok(())
 }

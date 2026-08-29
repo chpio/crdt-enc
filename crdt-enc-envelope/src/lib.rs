@@ -174,7 +174,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
     /// tagging the ciphertext with that key's id (in a versioned `EncBox`) so `decrypt` can look
     /// up the exact same key later even after a rotation. Fails if no content key has been
     /// established yet (see `set_remote_meta`).
-    async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
+    async fn encrypt(&self, clear_text: SecretBytes) -> Result<Vec<u8>> {
         let key = self
             .data
             .with(|data| data.keys.latest_key())
@@ -198,7 +198,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
                 .context("Unable to get random data for nonce")?;
             let xnonce = XNonce::from(nonce);
             let enc_data = aead
-                .encrypt(&xnonce, clear_text.as_ref())
+                .encrypt(&xnonce, clear_text.expose_secret())
                 .context("Encryption failed")?;
             let enc_box = EncBox {
                 key_id,
@@ -216,7 +216,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
     /// Reverses `encrypt`. Looks up the specific key the ciphertext was tagged with (not
     /// necessarily the current latest one, e.g. after a rotation) via `Keys::get_key`. Fails if
     /// that key is unknown, the ciphertext was tampered with, or authentication fails.
-    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
+    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<SecretBytes> {
         let version_box =
             VersionBytesRef::deserialize(&enc_data).context("failed to parse version box")?;
         version_box
@@ -247,7 +247,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             let clear_text = aead
                 .decrypt(&xnonce, ciphertext.as_ref())
                 .context("Decryption failed")?;
-            Ok(clear_text)
+            Ok(SecretBytes::new(clear_text))
         })
         .await?
     }

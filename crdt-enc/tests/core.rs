@@ -12,7 +12,7 @@ use ::crdt_enc::{
     Core, CoreSubHandle, OpenOptions,
     protector::Protector,
     storage::Storage,
-    utils::{LockBox, VersionBytes},
+    utils::{LockBox, SecretBytes, VersionBytes},
 };
 use ::crdts::{CmRDT, MVReg};
 use ::serde::{Deserialize, Serialize};
@@ -372,14 +372,14 @@ impl Protector for MemProtector {
         Ok(())
     }
 
-    async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
+    async fn encrypt(&self, clear_text: SecretBytes) -> Result<Vec<u8>> {
         self.fault_if(ProtectorFault::Encrypt)?;
-        Ok(flip(clear_text))
+        Ok(flip(clear_text.expose_secret().to_vec()))
     }
 
-    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
+    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<SecretBytes> {
         self.fault_if(ProtectorFault::Decrypt)?;
-        Ok(match self.garble.with(|garble| *garble) {
+        Ok(SecretBytes::new(match self.garble.with(|garble| *garble) {
             None => flip(enc_data),
             Some(Garble::TooShort) => vec![0, 1, 2],
             Some(Garble::WrongDataVersion) => {
@@ -388,7 +388,7 @@ impl Protector for MemProtector {
             Some(Garble::NotMsgpack) => {
                 VersionBytes::new(CURRENT_DATA_VERSION, vec![0xc1]).serialize()
             }
-        })
+        }))
     }
 }
 
@@ -1181,12 +1181,12 @@ impl MemProtector {
 struct MinimalProtector;
 
 impl Protector for MinimalProtector {
-    async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(flip(clear_text))
+    async fn encrypt(&self, clear_text: SecretBytes) -> Result<Vec<u8>> {
+        Ok(flip(clear_text.expose_secret().to_vec()))
     }
 
-    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(flip(enc_data))
+    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<SecretBytes> {
+        Ok(SecretBytes::new(flip(enc_data)))
     }
 }
 

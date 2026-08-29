@@ -9,7 +9,7 @@ use ::anyhow::Result;
 use ::crdt_enc::{
     CoreSubHandle, OpenOptions,
     protector::Protector,
-    utils::{EmptyCrdt, VersionBytes},
+    utils::{EmptyCrdt, SecretBytes, VersionBytes},
 };
 use ::crdt_enc_tokio::Storage;
 use ::crdts::{CmRDT, MVReg};
@@ -23,12 +23,12 @@ const DATA_VERSION: Uuid = Uuid::from_u128(0x_6d3f81a0_47c2_4e95_b1d8_0f27ea5c9b
 struct PassThrough;
 
 impl Protector for PassThrough {
-    async fn encrypt(&self, clear_text: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(clear_text)
+    async fn encrypt(&self, clear_text: SecretBytes) -> Result<Vec<u8>> {
+        Ok(clear_text.expose_secret().to_vec())
     }
 
-    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<Vec<u8>> {
-        Ok(enc_data)
+    async fn decrypt(&self, enc_data: Vec<u8>) -> Result<SecretBytes> {
+        Ok(SecretBytes::new(enc_data))
     }
 }
 
