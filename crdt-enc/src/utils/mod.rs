@@ -1,7 +1,11 @@
+/// [`SecretBytes`]: plaintext secret bytes that zeroize on drop and redact themselves in `Debug`,
+/// for the windows where a secret has to be readable.
+mod secret_bytes;
 /// The `VersionBytes`/`VersionBytesRef`/`VersionBytesBuf` family: a UUID version tag prepended to a
 /// byte blob, used everywhere data is serialized so formats can evolve safely.
 mod version_bytes;
 
+pub use secret_bytes::*;
 pub use version_bytes::*;
 
 use ::anyhow::{Context, Result};

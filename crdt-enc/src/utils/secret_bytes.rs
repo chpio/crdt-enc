@@ -1,8 +1,9 @@
 use ::std::fmt::{self, Debug};
 use ::zeroize::Zeroizing;
 
-/// The plaintext returned by [`AtRest::decrypt`](crate::utils::AtRest::decrypt): zeroized once
-/// dropped, and deliberately redacted by `Debug` so accidentally logging/printing it (e.g. via
+/// Plaintext secret bytes -- what `Protector::decrypt` hands back, and what
+/// `crdt-enc-envelope`'s `AtRest::decrypt` and `KeySlotProtector::unwrap_key` hand back too:
+/// zeroized once dropped, and deliberately redacted by `Debug` so accidentally logging/printing it (e.g. via
 /// `dbg!` or an error message) doesn't leak the secret -- unlike a bare `Zeroizing<Vec<u8>>`, whose
 /// `Debug` impl just forwards to the inner `Vec<u8>` and would print the raw bytes. See
 /// `expose_secret` for actual use.

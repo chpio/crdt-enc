@@ -16,6 +16,7 @@ futures = "0.3"
 dyn-clone = "1"
 bytes = "1"
 phf = {version = "0.14", features = ["macros"]}
+zeroize = "1.9"
 
 [dependencies.uuid]
 version = "1"
