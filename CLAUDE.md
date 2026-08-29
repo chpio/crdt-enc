@@ -19,7 +19,7 @@ implemented as *one* `Protector` — [crdt-enc-envelope](crdt-enc-envelope/) —
 
 ## Workspace layout
 
-This is a Cargo workspace (resolver "2", edition 2024) with these crates:
+This is a Cargo workspace (resolver "3", edition 2024) with these crates:
 
 - [crdt-enc/](crdt-enc/) — the core, storage/crypto-agnostic. Defines the `Core<S, ST, P>` engine and
   the two traits other crates implement:
