@@ -260,3 +260,40 @@ fn version_error_display_propagates_a_writer_failure() {
     }
     write!(FailAfter { remaining: 1000 }, "{}", err).unwrap();
 }
+
+/// `crdt-enc-envelope`'s `Key` writes its key material out through `VersionBytesRef` and reads it
+/// back as `VersionBytes` -- a cross-type round trip through the real on-disk format, done that way
+/// so serializing can borrow out of a `SecretBytes` instead of copying the raw key into an owned
+/// buffer. That only holds if the two encode identically.
+///
+/// The frozen bytes matter as much as the equality: comparing the two against each other would
+/// still pass if a serde or rmp-serde change moved both at once, while silently making every
+/// `Keys` blob already on disk unreadable.
+#[test]
+fn owned_and_borrowed_encode_identically() {
+    const VERSION: Uuid = Uuid::from_u128(0x_a57761b0_c4b4_48fc_aa81_485cb2e37862);
+    const CONTENT: &[u8] = &[1, 2, 3];
+
+    let from_owned =
+        rmp_serde::to_vec_named(&VersionBytes::new(VERSION, CONTENT.to_vec())).unwrap();
+    let from_borrowed = rmp_serde::to_vec_named(&VersionBytesRef::new(VERSION, CONTENT)).unwrap();
+
+    assert_eq!(from_owned, from_borrowed);
+
+    // captured once from the encoding above, then frozen: a two-element array holding the version
+    // tag and the content, each as a msgpack `bin`
+    const ENCODED: &[u8] = &[
+        0x92, 0xc4, 0x10, 0xa5, 0x77, 0x61, 0xb0, 0xc4, 0xb4, 0x48, 0xfc, 0xaa, 0x81, 0x48, 0x5c,
+        0xb2, 0xe3, 0x78, 0x62, 0xc4, 0x03, 0x01, 0x02, 0x03,
+    ];
+    assert_eq!(from_owned, ENCODED);
+
+    // each side reads what the other wrote
+    let owned: VersionBytes = rmp_serde::from_slice(&from_borrowed).unwrap();
+    assert_eq!(owned.version(), VERSION);
+    assert_eq!(owned.as_ref(), CONTENT);
+
+    let borrowed: VersionBytesRef<'_> = rmp_serde::from_slice(&from_owned).unwrap();
+    assert_eq!(borrowed.version(), VERSION);
+    assert_eq!(borrowed.as_ref(), CONTENT);
+}
