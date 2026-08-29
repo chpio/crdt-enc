@@ -27,13 +27,18 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
     remote meta, states, ops) are persisted and listed.
   - [protector.rs](crdt-enc/src/protector.rs) — `Protector` trait: `encrypt`/`decrypt` on opaque byte
     blobs, plus `init`/`set_remote_meta` lifecycle hooks. `Core` has no concept of "keys" at all — it's
-    entirely up to the `Protector` implementation whether/how it manages key material.
+    entirely up to the `Protector` implementation whether/how it manages key material. Plaintext
+    crosses this boundary as `SecretBytes` (in on `encrypt`, out of `decrypt`); ciphertext is a plain
+    `Vec<u8>`.
   - [utils/](crdt-enc/src/utils/) — `VersionBytes`/`VersionBytesRef`/`VersionBytesBuf` (a UUID version
     tag prepended to a byte blob, used everywhere data is serialized so formats can evolve safely),
-    `LockBox` (a sync-`Mutex` wrapper used to guard mutable state without holding a lock across
-    `.await`), and `decode_version_bytes_mvreg_custom_phf`/`encode_version_bytes_mvreg_custom` (generic
-    helpers for merging/writing an encrypted `T: CvRDT` value into a synced `MVReg<VersionBytes, Uuid>`
-    register — the extension point where a `Protector` plugs in its actual encrypt/decrypt).
+    `SecretBytes` (plaintext secret bytes, zeroized on drop and redacted in `Debug`; its
+    `expose_secret` is a deliberately named method rather than an `AsRef`/`Deref` impl, so
+    `grep -i expose` finds every place a secret is handed out in the clear), `LockBox` (a
+    sync-`Mutex` wrapper used to guard mutable state without holding a lock across `.await`), and
+    `decode_version_bytes_mvreg_custom_phf`/`encode_version_bytes_mvreg_custom` (generic helpers for
+    merging/writing an encrypted `T: CvRDT` value into a synced `MVReg<VersionBytes, Uuid>` register
+    — the extension point where a `Protector` plugs in its actual encrypt/decrypt).
 - [crdt-enc-envelope/](crdt-enc-envelope/) — a `Protector` implementing envelope encryption: manages its
   own rotating `Keys` CRDT (bootstrapping a new random content key if none exists yet, converging via
   `Keys::latest_key()`'s min-by-id if multiple devices bootstrap concurrently) and encrypts content
@@ -46,9 +51,7 @@ This is a Cargo workspace (resolver "2", edition 2024) with these crates:
     nothing about keys, and neither does any other crate.
   - [utils/](crdt-enc-envelope/src/utils/) — `AtRest` (encrypts a secret under a random process-local
     key while it sits idle in memory, so raw key material isn't scattered in plaintext across the
-    heap) and `SecretBytes` (plaintext secret bytes, zeroized on drop and redacted in `Debug`; its
-    `expose_secret`/`into_exposed_secret` are deliberately named methods rather than an
-    `AsRef`/`Deref` impl, so `grep -i expose` finds every place a secret is handed out in the clear).
+    heap), plus a re-export of `crdt_enc::utils::SecretBytes`, which this crate's own API names.
 - [crdt-enc-password/](crdt-enc-password/) — a `KeySlotProtector` protecting the content key with a
   password: an Argon2id-derived key encrypts it with XChaCha20-Poly1305. Every wrapped blob carries its
   own salt and Argon2 parameters, so it's independently unwrappable without any pre-agreed salt between

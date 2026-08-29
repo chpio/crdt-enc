@@ -29,3 +29,11 @@
   an opt-in `forget_password()` the app can call once it decides no new devices will join -- after
   that, only already-cached salts keep working until the password is provided again. (Own
   instance-lifetime commit, separate from everything else.)
+* the CRDT state itself is the largest remaining plaintext exposure in memory, and `SecretBytes` at
+  the `Protector` boundary does not touch it: `CoreMutData::state` holds `S` in the clear for the
+  whole process lifetime, and `S` is the caller's type, so `Core` cannot zeroize it. The
+  serialization buffers around it are now `SecretBytes`, but that only shortens the window, it does
+  not close it. Two smaller gaps in the same area: `rmp_serde::to_vec_named` grows its `Vec`, so any
+  buffer it reallocates away is freed uncleared before the final one gets wrapped, and
+  `rmp_serde::from_slice` copies the decrypted plaintext straight into `S`/`Vec<S::Op>` on the way
+  back in. Fixing either properly needs a serializer that writes into a pre-sized zeroizing buffer.
