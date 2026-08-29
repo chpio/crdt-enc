@@ -1,0 +1,15 @@
+# Test-coverage shortcuts.
+#
+# Cargo has no built-in coverage command; these wrap `cargo-llvm-cov`, which in
+# turn drives rustc's `-C instrument-coverage` plus the `llvm-tools` component.
+#
+# Setup (once):
+#     rustup component add llvm-tools-preview
+#     cargo install cargo-llvm-cov --locked
+#
+# `example-test` is excluded: it is a hand-run demo binary with no tests, so
+# counting its lines would only dilute the numbers for the actual crates.
+[alias]
+cov = "llvm-cov --workspace --exclude example-test"
+cov-html = "llvm-cov --workspace --exclude example-test --html --open"
+cov-lcov = "llvm-cov --workspace --exclude example-test --lcov --output-path target/llvm-cov/lcov.info"

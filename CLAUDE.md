@@ -95,7 +95,19 @@ cargo test -p crdt-enc           # test just the core crate
 cargo test --test version_box_buf   # run the doc/integration tests in crdt-enc/tests/version_box_buf.rs
 cargo fmt                        # uses rustfmt.toml (imports_granularity = "Crate")
 cargo run -p example-test        # run the example binary (writes/reads under ./data, see below)
+
+cargo cov                        # run all tests + print a per-file coverage table
+cargo cov-html                   # same, but render an HTML report and open it
+cargo cov-lcov                   # same, but write target/llvm-cov/lcov.info (editor gutters)
 ```
+
+The three `cov` aliases live in [.cargo/config.toml](.cargo/config.toml) and wrap
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) — Cargo itself has no coverage
+subcommand; the alias drives rustc's `-C instrument-coverage` plus the `llvm-tools` rustup component.
+One-time setup on a fresh machine: `rustup component add llvm-tools-preview` and
+`cargo install cargo-llvm-cov --locked`. They cover the whole workspace except `example-test`, and
+build into a separate `target/llvm-cov-target/` directory, so switching between `cargo test` and
+`cargo cov` does not invalidate the normal build cache.
 
 The example binary ([examples/test/src/main.rs](examples/test/src/main.rs)) reads/writes real files
 under `./data/local` and `./data/remote` relative to the workspace root — the untracked `data/`
