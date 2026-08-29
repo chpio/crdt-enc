@@ -10,7 +10,7 @@ anyhow = "1"
 serde = "1"
 rmp-serde = "1"
 serde_bytes = "0.11"
-argon2 = "0.5"
+argon2 = "0.6"
 zeroize = "1.9"
 chacha20poly1305 = "0.11"
 tokio = { version = "1", features = ["rt"] }
