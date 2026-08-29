@@ -25,12 +25,13 @@ use ::tokio::task::spawn_blocking;
 use ::uuid::Uuid;
 use ::zeroize::Zeroizing;
 
-/// [`at_rest::AtRest`]: a reusable, generic "encrypt this secret while it sits idle in memory"
-/// primitive.
-pub mod at_rest;
 /// The `Keys`/`Key` CRDT types backing the rotating content-encryption key, private to this crate --
 /// see `EnvelopeProtector`'s use of them.
 mod keys;
+/// Reusable helpers shared across this crate and its implementors: [`utils::AtRest`] for encrypting
+/// a secret while it sits idle in memory, and [`utils::SecretBytes`] for the moments it has to be
+/// readable.
+pub mod utils;
 
 /// version of the outer sync envelope holding the (wrapped) `Keys` CRDT
 const CURRENT_VERSION: Uuid = Uuid::from_u128(0x_59b8c30c_f4b0_405b_acf1_9e2202665dbf);

@@ -7,7 +7,7 @@ use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::{LockBox, VersionBytesRef};
-use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
+use ::crdt_enc_envelope::{KeySlotProtector, utils::AtRest};
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::collections::HashMap;

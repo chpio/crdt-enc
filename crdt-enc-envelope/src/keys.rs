@@ -1,4 +1,4 @@
-use crate::at_rest::AtRest;
+use crate::utils::AtRest;
 use ::anyhow::Result;
 use ::crdt_enc::utils::VersionBytes;
 use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};

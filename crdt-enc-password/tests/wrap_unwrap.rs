@@ -1,4 +1,4 @@
-use ::crdt_enc_envelope::{KeySlotProtector, at_rest::AtRest};
+use ::crdt_enc_envelope::{KeySlotProtector, utils::AtRest};
 use ::crdt_enc_password::PasswordKeySlot;
 use ::zeroize::Zeroizing;
 

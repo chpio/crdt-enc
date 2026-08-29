@@ -1,6 +1,6 @@
 use ::anyhow::Result;
 use ::crdt_enc::OpenOptions;
-use ::crdt_enc_envelope::{EnvelopeProtector, at_rest::AtRest};
+use ::crdt_enc_envelope::{EnvelopeProtector, utils::AtRest};
 use ::crdt_enc_password::PasswordKeySlot;
 use ::crdt_enc_tokio::Storage;
 use ::crdts::MVReg;

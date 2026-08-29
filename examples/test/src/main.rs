@@ -1,5 +1,5 @@
 use ::anyhow::Result;
-use ::crdt_enc_envelope::{at_rest::AtRest, EnvelopeProtector};
+use ::crdt_enc_envelope::{utils::AtRest, EnvelopeProtector};
 use ::crdt_enc_password::PasswordKeySlot;
 use ::crdt_enc_tokio::Storage;
 use ::uuid::Uuid;
