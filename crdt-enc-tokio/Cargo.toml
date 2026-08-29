@@ -28,3 +28,7 @@ features = ["fs"]
 
 [dependencies.crdt-enc]
 path = "../crdt-enc"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

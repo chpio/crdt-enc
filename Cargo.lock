@@ -228,6 +228,7 @@ dependencies = [
  "fs4",
  "futures",
  "serde",
+ "tempfile",
  "tiny-keccak",
  "tokio",
  "tokio-stream",
