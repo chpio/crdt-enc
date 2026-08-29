@@ -5,7 +5,10 @@
 //! re-encrypting any historical content.
 #![warn(missing_docs)]
 
-use crate::keys::{Key, Keys};
+use crate::{
+    keys::{Key, Keys},
+    utils::SecretBytes,
+};
 use ::anyhow::{Context, Error, Result};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::{
@@ -23,7 +26,6 @@ use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt::Debug, future::Future, mem, pin::Pin};
 use ::tokio::task::spawn_blocking;
 use ::uuid::Uuid;
-use ::zeroize::Zeroizing;
 
 /// The `Keys`/`Key` CRDT types backing the rotating content-encryption key, private to this crate --
 /// see `EnvelopeProtector`'s use of them.
@@ -62,19 +64,16 @@ where
     /// GPG-encrypts it for one or more recipients, or symmetrically encrypts it with a
     /// password-derived key). Takes `key` owned since every caller already owns it (it's freshly
     /// serialized/generated), letting implementations avoid an otherwise-pointless internal clone.
-    /// Takes `Zeroizing` since `key` is itself unprotected plaintext key material (the counterpart
-    /// of `unwrap_key`'s `Zeroizing` return).
-    fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    /// Takes [`SecretBytes`] since `key` is itself unprotected plaintext key material (the
+    /// counterpart of `unwrap_key`'s `SecretBytes` return).
+    fn wrap_key(&self, key: SecretBytes) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
     /// Reverses [`wrap_key`](KeySlotProtector::wrap_key), recovering the original key bytes.
     /// Should fail (`Err`) rather than return garbage if `wrapped` can't be
     /// authenticated/decrypted (e.g. wrong password, tampered data). Takes `wrapped` owned for the
-    /// same reason as `wrap_key`'s `key`. Returns `Zeroizing` since this is the freshly-recovered
-    /// plaintext key material.
-    fn unwrap_key(
-        &self,
-        wrapped: Vec<u8>,
-    ) -> impl Future<Output = Result<Zeroizing<Vec<u8>>>> + Send;
+    /// same reason as `wrap_key`'s `key`. Returns [`SecretBytes`] since this is the
+    /// freshly-recovered plaintext key material.
+    fn unwrap_key(&self, wrapped: Vec<u8>) -> impl Future<Output = Result<SecretBytes>> + Send;
 }
 
 /// `EnvelopeProtector`'s mutable in-process state, guarded together so it's always mutated/read as
@@ -154,7 +153,7 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
         let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
             &remote_meta,
             &SUPPORTED_VERSIONS,
-            |buf| async move { self.key_slot.unwrap_key(buf).await },
+            |buf| async move { Ok(self.key_slot.unwrap_key(buf).await?.into_exposed_secret()) },
         )
         .await?;
 
@@ -293,7 +292,7 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
             let keys_ctx: ReadCtx<Keys, Uuid> = decode_version_bytes_mvreg_custom_phf(
                 &remote_meta,
                 &SUPPORTED_VERSIONS,
-                |buf| async move { self.key_slot.unwrap_key(buf).await },
+                |buf| async move { Ok(self.key_slot.unwrap_key(buf).await?.into_exposed_secret()) },
             )
             .await?;
 
@@ -325,7 +324,7 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
                         },
                         actor,
                         CURRENT_VERSION,
-                        |buf| async move { self.key_slot.wrap_key(Zeroizing::new(buf)).await },
+                        |buf| async move { self.key_slot.wrap_key(SecretBytes::new(buf)).await },
                     )
                     .await?;
 

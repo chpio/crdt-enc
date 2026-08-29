@@ -7,7 +7,10 @@ use ::anyhow::{Context, Error, Result};
 use ::argon2::{Algorithm, Argon2, Params, Version};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::{LockBox, VersionBytesRef};
-use ::crdt_enc_envelope::{KeySlotProtector, utils::AtRest};
+use ::crdt_enc_envelope::{
+    KeySlotProtector,
+    utils::{AtRest, SecretBytes},
+};
 use ::rand::{TryRng, rng};
 use ::serde::{Deserialize, Serialize};
 use ::std::collections::HashMap;
@@ -130,7 +133,7 @@ impl KeySlotProtector for PasswordKeySlot {
     /// with a fresh random nonce, and encodes the result -- salt, Argon2 parameters, nonce,
     /// ciphertext -- as a self-describing `Envelope`, tagged with `ENVELOPE_VERSION` so the format
     /// can evolve safely.
-    async fn wrap_key(&self, key: Zeroizing<Vec<u8>>) -> Result<Vec<u8>> {
+    async fn wrap_key(&self, key: SecretBytes) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
         let (m_cost, t_cost, p_cost) = (self.m_cost, self.t_cost, self.p_cost);
@@ -146,7 +149,7 @@ impl KeySlotProtector for PasswordKeySlot {
                     .expect("kek is always KEK_LEN bytes by construction"),
             );
             let ciphertext = aead
-                .encrypt(&XNonce::from(nonce), key.as_ref())
+                .encrypt(&XNonce::from(nonce), key.expose_secret())
                 .context("encryption failed")?;
 
             let envelope = Envelope {
@@ -169,7 +172,7 @@ impl KeySlotProtector for PasswordKeySlot {
     /// salt/parameters, and decrypts it. Fails if the envelope can't be parsed, its version tag
     /// doesn't match `ENVELOPE_VERSION`, its nonce is the wrong length, or decryption fails (wrong
     /// password or tampered data).
-    async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<Zeroizing<Vec<u8>>> {
+    async fn unwrap_key(&self, wrapped: Vec<u8>) -> Result<SecretBytes> {
         let version_box =
             VersionBytesRef::deserialize(&wrapped).context("failed to parse password envelope")?;
         version_box
@@ -207,7 +210,7 @@ impl KeySlotProtector for PasswordKeySlot {
             );
             let xnonce = XNonce::from(envelope.nonce);
             aead.decrypt(&xnonce, envelope.ciphertext.as_ref())
-                .map(Zeroizing::new)
+                .map(SecretBytes::new)
                 .map_err(|_| Error::msg("decryption failed (wrong password or tampered data)"))
         })
         .await?
