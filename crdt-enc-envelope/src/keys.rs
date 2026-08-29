@@ -171,7 +171,10 @@ impl AtRestKey {
 
     /// Reverses `encrypt`.
     fn decrypt(&self) -> VersionBytes {
-        VersionBytes::new(self.version, self.content.decrypt().as_bytes().to_vec())
+        VersionBytes::new(
+            self.version,
+            self.content.decrypt().expose_secret().to_vec(),
+        )
     }
 }
 

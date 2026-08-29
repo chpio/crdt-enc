@@ -142,7 +142,7 @@ impl KeySlotProtector for PasswordKeySlot {
                 .context("Unable to get random data for nonce")?;
 
             let aead = XChaCha20Poly1305::new(
-                &AeadKey::try_from(kek.decrypt().as_bytes())
+                &AeadKey::try_from(kek.decrypt().expose_secret())
                     .expect("kek is always KEK_LEN bytes by construction"),
             );
             let ciphertext = aead
@@ -202,7 +202,7 @@ impl KeySlotProtector for PasswordKeySlot {
 
         spawn_blocking(move || {
             let aead = XChaCha20Poly1305::new(
-                &AeadKey::try_from(kek.decrypt().as_bytes())
+                &AeadKey::try_from(kek.decrypt().expose_secret())
                     .expect("kek is always KEK_LEN bytes by construction"),
             );
             let xnonce = XNonce::from(envelope.nonce);
@@ -230,7 +230,7 @@ fn derive_kek(
 
     let mut kek = Zeroizing::new([0u8; KEK_LEN]);
     argon2
-        .hash_password_into(password.decrypt().as_bytes(), salt, kek.as_mut())
+        .hash_password_into(password.decrypt().expose_secret(), salt, kek.as_mut())
         .map_err(|err| Error::msg(format!("argon2 hashing failed: {err}")))?;
 
     Ok(AtRest::encrypt(kek.as_ref()))
