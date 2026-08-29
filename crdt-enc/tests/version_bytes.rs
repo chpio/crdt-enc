@@ -121,6 +121,12 @@ fn version_error_lists_what_it_expected() {
     assert!(format!("{:?}", err).contains("VersionError"));
 }
 
+/// The inherent `serialize`/`deserialize` pair: the flat "tag, then content" layout that
+/// `crdt-enc-tokio` writes to and reads from disk. Distinct from the serde derive, which encodes
+/// the same type as msgpack and is covered by `serde_encoding_matches_between_owned_and_borrowed`.
+///
+/// Also checks that the owned and borrowed sides agree here, though they can hardly disagree:
+/// `VersionBytes`'s two methods both delegate straight to `VersionBytesRef`'s.
 #[test]
 fn serialize_round_trips_through_deserialize() {
     const VERSION: Uuid = Uuid::from_u128(0x_a57761b0_c4b4_48fc_aa81_485cb2e37862);
@@ -261,16 +267,21 @@ fn version_error_display_propagates_a_writer_failure() {
     write!(FailAfter { remaining: 1000 }, "{}", err).unwrap();
 }
 
-/// `crdt-enc-envelope`'s `Key` writes its key material out through `VersionBytesRef` and reads it
-/// back as `VersionBytes` -- a cross-type round trip through the real on-disk format, done that way
-/// so serializing can borrow out of a `SecretBytes` instead of copying the raw key into an owned
-/// buffer. That only holds if the two encode identically.
+/// The serde derive, as opposed to the inherent `serialize`/`deserialize` pair above -- this is the
+/// encoding used whenever a `VersionBytes` sits inside another serde structure, such as
+/// `crdt-enc-envelope`'s `KeyWire` or the `MVReg<VersionBytes, Uuid>` registers `Core` syncs.
+///
+/// Unlike the inherent pair, the owned and borrowed sides here are two independent derives that
+/// could genuinely drift apart, and `Key` depends on them not doing so: it writes its key material
+/// out through `VersionBytesRef` and reads it back as `VersionBytes`, a cross-type round trip
+/// through the real on-disk format, done that way so serializing can borrow out of a `SecretBytes`
+/// instead of copying the raw key into an owned buffer.
 ///
 /// The frozen bytes matter as much as the equality: comparing the two against each other would
 /// still pass if a serde or rmp-serde change moved both at once, while silently making every
 /// `Keys` blob already on disk unreadable.
 #[test]
-fn owned_and_borrowed_encode_identically() {
+fn serde_encoding_matches_between_owned_and_borrowed() {
     const VERSION: Uuid = Uuid::from_u128(0x_a57761b0_c4b4_48fc_aa81_485cb2e37862);
     const CONTENT: &[u8] = &[1, 2, 3];
 
