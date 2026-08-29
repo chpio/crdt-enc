@@ -9,7 +9,7 @@ use crate::{
     keys::{Key, Keys},
     utils::SecretBytes,
 };
-use ::anyhow::{Context, Error, Result};
+use ::anyhow::{Context, Error, Result, ensure};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::{
     CoreSubHandle,
@@ -180,17 +180,19 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             .context("no latest key")?;
 
         let key_id = key.id();
-        key.key()
-            .ensure_version(KEY_VERSION)
-            .context("not matching key version")?;
-        let key: [u8; KEY_LEN] = key
-            .key()
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::msg("Invalid key length"))?;
+        let (key_version, key_bytes) = key.key();
+        ensure!(
+            key_version == KEY_VERSION,
+            "not matching key version, got: {key_version}, expected: {KEY_VERSION}"
+        );
 
         spawn_blocking(move || {
-            let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
+            // built inside the blocking task so the raw key stays in `SecretBytes` right up to the
+            // point the cipher needs it, instead of being copied into a bare `[u8; KEY_LEN]` first
+            let aead = XChaCha20Poly1305::new(
+                &AeadKey::try_from(key_bytes.expose_secret())
+                    .map_err(|_| Error::msg("Invalid key length"))?,
+            );
             let mut nonce = [0u8; NONCE_LEN];
             rng()
                 .try_fill_bytes(&mut nonce)
@@ -229,19 +231,20 @@ impl<KS: KeySlotProtector> Protector for EnvelopeProtector<KS> {
             .with(|data| data.keys.get_key(enc_box.key_id))
             .with_context(|| format!("no key with id {}", enc_box.key_id))?;
 
-        key.key()
-            .ensure_version(KEY_VERSION)
-            .context("not matching key version")?;
-        let key: [u8; KEY_LEN] = key
-            .key()
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::msg("Invalid key length"))?;
+        let (key_version, key_bytes) = key.key();
+        ensure!(
+            key_version == KEY_VERSION,
+            "not matching key version, got: {key_version}, expected: {KEY_VERSION}"
+        );
         let nonce = enc_box.nonce;
         let ciphertext = enc_box.enc_data.into_owned();
 
         spawn_blocking(move || {
-            let aead = XChaCha20Poly1305::new(&AeadKey::from(key));
+            // see `encrypt` on why the cipher is built here rather than outside
+            let aead = XChaCha20Poly1305::new(
+                &AeadKey::try_from(key_bytes.expose_secret())
+                    .map_err(|_| Error::msg("Invalid key length"))?,
+            );
             let xnonce = XNonce::from(nonce);
             let clear_text = aead
                 .decrypt(&xnonce, ciphertext.as_ref())
@@ -307,7 +310,8 @@ impl<KS: KeySlotProtector> EnvelopeProtector<KS> {
                     rng()
                         .try_fill_bytes(&mut key_bytes)
                         .context("Unable to get random data for content key")?;
-                    let new_key = Key::new(VersionBytes::new(KEY_VERSION, key_bytes));
+                    // into `SecretBytes` straight away: this buffer holds a fresh content key
+                    let new_key = Key::new(KEY_VERSION, SecretBytes::new(key_bytes));
 
                     let mut new_keys = self.data.with(|data| data.keys.clone());
                     new_keys.insert_latest_key(actor, new_key);

@@ -1,6 +1,6 @@
 use crate::utils::AtRest;
 use ::anyhow::Result;
-use ::crdt_enc::utils::VersionBytes;
+use ::crdt_enc::utils::{SecretBytes, VersionBytes, VersionBytesRef};
 use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};
 use ::serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ::std::{
@@ -93,15 +93,15 @@ pub struct Key {
 
 impl Key {
     /// Creates a key with a fresh random id.
-    pub fn new(key: VersionBytes) -> Key {
-        Self::new_with_id(Uuid::new_v4(), key)
+    pub fn new(version: Uuid, key: SecretBytes) -> Key {
+        Self::new_with_id(Uuid::new_v4(), version, key)
     }
 
     /// Creates a key with an explicit id, e.g. when reconstructing one that already has one.
-    pub fn new_with_id(id: Uuid, key: VersionBytes) -> Key {
+    pub fn new_with_id(id: Uuid, version: Uuid, key: SecretBytes) -> Key {
         Key {
             id,
-            key: AtRestKey::encrypt(key),
+            key: AtRestKey::encrypt(version, key),
         }
     }
 
@@ -110,8 +110,14 @@ impl Key {
         self.id
     }
 
-    /// The raw key bytes, decrypted from their at-rest encryption.
-    pub fn key(&self) -> VersionBytes {
+    /// The raw key bytes, decrypted from their at-rest encryption, paired with their version tag.
+    ///
+    /// Returned as a pair rather than a `VersionBytes` because that type carries its content in a
+    /// plain `Vec<u8>`: assembling one here would copy the raw key into a buffer nothing zeroizes,
+    /// on every call, only for the caller to split it apart again. The tag is not sensitive, so it
+    /// travels alongside the protected bytes instead of inside them -- the same split `AtRestKey`
+    /// already uses at rest.
+    pub fn key(&self) -> (Uuid, SecretBytes) {
         self.key.decrypt()
     }
 }
@@ -119,30 +125,46 @@ impl Key {
 /// Wire-format mirror of `Key`, used only by `Key`'s hand-written `Serialize`/`Deserialize` --
 /// `Key`'s own fields hold the at-rest-encrypted form, which is process-local and must never be
 /// what's actually sent over the wire/stored in the synced `Keys` CRDT.
+///
+/// Generic over how the key bytes are carried so that serializing can borrow them straight out of
+/// a [`SecretBytes`] (`VersionBytesRef`) while deserializing owns them (`VersionBytes`). Both encode
+/// identically -- a version tag followed by the raw bytes -- so the wire format does not depend on
+/// which side is in play; keeping it one struct keeps that shape defined in a single place.
 #[derive(Serialize, Deserialize)]
-struct KeyWire {
+struct KeyWire<K> {
     /// See `Key::id`.
     id: Uuid,
     /// See `Key::key`.
-    key: VersionBytes,
+    key: K,
 }
 
 impl Serialize for Key {
-    /// Decrypts the at-rest-encrypted key material and serializes it via `KeyWire`.
+    /// Decrypts the at-rest-encrypted key material and serializes it via `KeyWire`, borrowing the
+    /// bytes out of the `SecretBytes` rather than copying them into an owned buffer first: such a
+    /// copy would hold the raw key and, being a plain `Vec`, would go back to the allocator
+    /// uncleared -- once per key in the set, every time `Keys` is serialized.
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let (version, key) = self.key();
         KeyWire {
             id: self.id,
-            key: self.key(),
+            key: VersionBytesRef::new(version, key.expose_secret()),
         }
         .serialize(serializer)
     }
 }
 
 impl<'de> Deserialize<'de> for Key {
-    /// Deserializes via `KeyWire`, then re-encrypts the key material at rest.
+    /// Deserializes via `KeyWire`, then re-encrypts the key material at rest. The buffer msgpack
+    /// decoded into is moved into `SecretBytes` rather than copied, so it zeroizes on drop instead
+    /// of being handed back to the allocator holding a content key.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        let wire = KeyWire::deserialize(deserializer)?;
-        Ok(Key::new_with_id(wire.id, wire.key))
+        let wire = KeyWire::<VersionBytes>::deserialize(deserializer)?;
+        let version = wire.key.version();
+        Ok(Key::new_with_id(
+            wire.id,
+            version,
+            SecretBytes::new(wire.key.into()),
+        ))
     }
 }
 
@@ -158,23 +180,18 @@ struct AtRestKey {
 }
 
 impl AtRestKey {
-    /// Encrypts `key`'s content at rest, keeping its version tag alongside in the clear.
-    fn encrypt(key: VersionBytes) -> AtRestKey {
-        let version = key.version();
-        let content: Vec<u8> = key.into();
-
+    /// Encrypts `key` at rest, keeping its version tag alongside in the clear.
+    fn encrypt(version: Uuid, key: SecretBytes) -> AtRestKey {
         AtRestKey {
             version,
-            content: AtRest::encrypt(content),
+            content: AtRest::encrypt(key.expose_secret()),
         }
     }
 
-    /// Reverses `encrypt`.
-    fn decrypt(&self) -> VersionBytes {
-        VersionBytes::new(
-            self.version,
-            self.content.decrypt().expose_secret().to_vec(),
-        )
+    /// Reverses `encrypt`. Costs no copy: `AtRest::decrypt` already allocates a fresh
+    /// `SecretBytes`, and the tag is just read back out.
+    fn decrypt(&self) -> (Uuid, SecretBytes) {
+        (self.version, self.content.decrypt())
     }
 }
 
