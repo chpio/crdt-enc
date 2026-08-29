@@ -299,12 +299,15 @@ where
 
         let ops = self.data.try_with(|data| f(&data.state.state))?;
 
-        let clear_text = rmp_serde::to_vec_named(&ops)?;
-        let clear_text = VersionBytes::new(self.current_data_version, clear_text);
+        // straight into `SecretBytes`: this is the caller's plaintext, and every buffer it passes
+        // through on the way to `encrypt` should zeroize rather than be handed back to the
+        // allocator intact
+        let plain = SecretBytes::new(rmp_serde::to_vec_named(&ops)?);
+        let clear_text = VersionBytesRef::new(self.current_data_version, plain.expose_secret());
 
         let data_enc = self
             .protector
-            .encrypt(SecretBytes::new(clear_text.serialize()))
+            .encrypt(clear_text.serialize_secret())
             .await?;
 
         // TODO: add key id
@@ -348,9 +351,9 @@ where
     pub async fn compact(self: &Arc<Self>) -> Result<()> {
         self.read_remote().await?;
 
-        let (clear_text, states_to_remove, ops_to_remove) = self.data.try_with(|data| {
-            let clear_text = rmp_serde::to_vec_named(&data.state)?;
-            let clear_text = VersionBytes::new(self.current_data_version, clear_text);
+        let (plain, states_to_remove, ops_to_remove) = self.data.try_with(|data| {
+            // see `read_and_apply` on why the snapshot goes into `SecretBytes` immediately
+            let plain = SecretBytes::new(rmp_serde::to_vec_named(&data.state)?);
 
             let states_to_remove = data.read_states.iter().cloned().collect();
 
@@ -361,12 +364,14 @@ where
                 .map(|dot| (dot.actor.clone(), dot.counter - 1))
                 .collect();
 
-            Ok((clear_text, states_to_remove, ops_to_remove))
+            Ok((plain, states_to_remove, ops_to_remove))
         })?;
+
+        let clear_text = VersionBytesRef::new(self.current_data_version, plain.expose_secret());
 
         let data_enc = self
             .protector
-            .encrypt(SecretBytes::new(clear_text.serialize()))
+            .encrypt(clear_text.serialize_secret())
             .await?;
 
         let enc_data = VersionBytes::new(CURRENT_VERSION, data_enc);

@@ -1,3 +1,4 @@
+use crate::utils::SecretBytes;
 use ::bytes::Buf;
 use ::serde::{Deserialize, Serialize};
 use ::std::{borrow::Cow, fmt, io::IoSlice};
@@ -226,6 +227,16 @@ impl<'a> VersionBytesRef<'a> {
         let version = Uuid::from_bytes(version);
 
         Ok(VersionBytesRef::new(version, &slice[VERSION_LEN..]))
+    }
+
+    /// Like [`serialize`](Self::serialize), but for content that is plaintext which must not be
+    /// left lying in a bare buffer -- the result zeroizes on drop and redacts itself in `Debug`.
+    ///
+    /// Wrapping `serialize`'s output afterwards is enough: it reserves the exact final length up
+    /// front and never reallocates, so the plaintext only ever lands in the one allocation that
+    /// gets wrapped here.
+    pub fn serialize_secret(&self) -> SecretBytes {
+        SecretBytes::new(self.serialize())
     }
 
     /// Serializes the version tag followed by the content into one contiguous buffer.
