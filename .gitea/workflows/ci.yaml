@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # built in the git/images repo
+    # The image runs rustc through sccache. Its storage (SCCACHE_REDIS_ENDPOINT and
+    # SCCACHE_REDIS_PASSWORD) comes from the runner for every job; don't set it here, an empty
+    # value would override it.
+    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: sccache --show-stats
+        if: always()

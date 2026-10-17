@@ -126,7 +126,10 @@ The example binary ([examples/test/src/main.rs](examples/test/src/main.rs)) read
 under `./data/local` and `./data/remote` relative to the workspace root — the untracked `data/`
 directory in this repo is its output, safe to inspect or delete.
 
-There is no CI config and no linter beyond `cargo fmt`/`cargo check` in this repo currently.
+CI ([.gitea/workflows/ci.yaml](.gitea/workflows/ci.yaml)) runs `cargo fmt --check`,
+`cargo clippy --all-targets --locked -- -D warnings` and `cargo test --locked` on every push to `main`
+and every PR, so clippy warnings fail the build. Workspace-wide lint settings live under
+`[workspace.lints]` in the root [Cargo.toml](Cargo.toml); every crate opts in via `[lints] workspace = true`.
 
 ## Notes on current state
 
