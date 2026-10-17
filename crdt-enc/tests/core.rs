@@ -484,6 +484,7 @@ struct Builder {
     remote: Arc<LockBox<Remote>>,
     create: bool,
     current_data_version: Uuid,
+    supported_data_versions: Vec<Uuid>,
     storage_fault: Arc<LockBox<Option<StorageFault>>>,
     protector_fault: Arc<LockBox<Option<ProtectorFault>>>,
     tamper: Arc<LockBox<Option<Tamper>>>,
@@ -504,6 +505,7 @@ impl Builder {
             remote,
             create: true,
             current_data_version: CURRENT_DATA_VERSION,
+            supported_data_versions: SUPPORTED_DATA_VERSIONS.to_vec(),
             storage_fault: Arc::new(LockBox::new(None)),
             protector_fault: Arc::new(LockBox::new(None)),
             tamper: Arc::new(LockBox::new(None)),
@@ -517,8 +519,15 @@ impl Builder {
         self
     }
 
+    /// A device on another data format entirely: it writes `version`, and reads nothing else.
     fn data_version(mut self, version: Uuid) -> Builder {
         self.current_data_version = version;
+        self.supported_data_versions = vec![version];
+        self
+    }
+
+    fn supported_data_versions(mut self, versions: &[Uuid]) -> Builder {
+        self.supported_data_versions = versions.to_vec();
         self
     }
 
@@ -562,7 +571,7 @@ impl Builder {
             storage,
             protector,
             create: self.create,
-            supported_data_versions: SUPPORTED_DATA_VERSIONS.to_vec(),
+            supported_data_versions: self.supported_data_versions.clone(),
             current_data_version: self.current_data_version,
         })
         .await?;
@@ -643,6 +652,30 @@ async fn open_without_create_fails_when_nothing_is_stored() {
         .await
         .expect_err("should refuse to invent a device identity");
     assert!(err.to_string().contains("create"), "got: {}", err);
+}
+
+/// A `Core` whose current data version it can't read would write every state and op in a format
+/// it then refuses to read back -- a misconfiguration to catch at open, not at the first read.
+#[tokio::test]
+async fn open_refuses_a_current_data_version_it_cannot_read() {
+    let err = Builder::new()
+        .data_version(OTHER_DATA_VERSION)
+        .supported_data_versions(SUPPORTED_DATA_VERSIONS)
+        .open()
+        .await
+        .expect_err("should refuse a data version it can't read back");
+    assert!(
+        err.to_string().contains("supported data versions"),
+        "got: {}",
+        err
+    );
+
+    // the order of the supported versions doesn't matter
+    Builder::new()
+        .supported_data_versions(&[OTHER_DATA_VERSION, CURRENT_DATA_VERSION])
+        .open()
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

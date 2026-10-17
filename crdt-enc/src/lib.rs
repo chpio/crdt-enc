@@ -20,7 +20,7 @@ use crate::{
     storage::Storage,
     utils::{LockBox, SecretBytes, VersionBytes, VersionBytesRef},
 };
-use ::anyhow::{Context, Error, Result};
+use ::anyhow::{Context, Error, Result, ensure};
 use ::async_trait::async_trait;
 use ::crdts::{CmRDT, CvRDT, MVReg, VClock};
 use ::dyn_clone::DynClone;
@@ -193,10 +193,20 @@ where
     /// given storage/protector. Loads/creates this device's [`LocalMeta`], runs [`Storage::init`] and
     /// [`Protector::init`] concurrently, then does an initial remote-meta read (always notifying
     /// storage/protector of the result, even if nothing was found). Does not generate or manage any
-    /// encryption key itself -- that's entirely the protector's job.
+    /// encryption key itself -- that's entirely the protector's job. Fails if
+    /// `options.current_data_version` isn't among `options.supported_data_versions`.
     pub async fn open(options: OpenOptions<ST, P>) -> Result<Arc<Self>> {
         let mut supported_data_versions = options.supported_data_versions;
         supported_data_versions.sort_unstable();
+
+        // otherwise every state/op this `Core` writes is one it refuses to read back
+        ensure!(
+            supported_data_versions
+                .binary_search(&options.current_data_version)
+                .is_ok(),
+            "current data version {} is not among the supported data versions",
+            options.current_data_version
+        );
 
         let core = Arc::new(Core {
             storage: options.storage,
@@ -680,8 +690,8 @@ pub struct OpenOptions<ST, P> {
     /// Whether to create local meta (and thus a new device identity) if none exists yet, instead of
     /// failing.
     pub create: bool,
-    /// The sorted set of inner-payload data versions this [`Core`] can read. Must include
-    /// [`current_data_version`](Self::current_data_version).
+    /// The inner-payload data versions this [`Core`] can read, in any order. Must include
+    /// [`current_data_version`](Self::current_data_version), or [`Core::open`] fails.
     pub supported_data_versions: Vec<Uuid>,
     /// The inner-payload data version newly-written state/op payloads are stamped with.
     pub current_data_version: Uuid,

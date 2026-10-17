@@ -2,9 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* `Core::open` should `ensure!` that `current_data_version` is in `supported_data_versions` --
-  otherwise `Core` writes data it can't read back itself. Also `OpenOptions` docs ask for a sorted
-  list, but `open` sorts it anyway.
 * `Keys::latest_key` panics if `latest_key_id` names an unknown key; return a `Result` instead. Only
   reachable with a valid KEK, so low priority.
 
