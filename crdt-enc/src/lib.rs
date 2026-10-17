@@ -330,15 +330,11 @@ where
 
         let data_enc = VersionBytes::new(CURRENT_VERSION, data_enc);
 
-        let (actor, version) = self.data.try_with(|data| {
-            let actor = data
-                .local_meta
-                .as_ref()
-                .ok_or_else(|| Error::msg("local meta not loaded"))?
-                .local_actor_id;
-            let version = data.state.next_op_versions.get(&actor);
-            Ok((actor, version))
-        })?;
+        // `read_and_apply` is only reachable on an opened `Core`, so local meta is always loaded
+        let actor = self.info().actor();
+        let version = self
+            .data
+            .with(|data| data.state.next_op_versions.get(&actor));
 
         self.storage.store_ops(actor, version, data_enc).await?;
 
