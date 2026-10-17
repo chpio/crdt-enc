@@ -25,5 +25,15 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      # in addition to `cargo test`, not instead: cargo-llvm-cov skips doctests on stable
+      - run: cargo cov --locked --fail-under-lines 97
+      # reuses the profile data of the run above instead of running the tests again
+      - run: |
+          mkdir -p target/llvm-cov
+          cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: target/llvm-cov/lcov.info
       - run: sccache --show-stats
         if: always()
