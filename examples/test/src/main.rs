@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
         storage,
         protector,
         create: true,
-        supported_data_versions: SUPPORTED_DATA_VERSIONS.iter().cloned().collect(),
+        supported_data_versions: SUPPORTED_DATA_VERSIONS.to_vec(),
         current_data_version: CURRENT_DATA_VERSION,
     };
     let repo = crdt_enc::Core::open(open_options).await?;

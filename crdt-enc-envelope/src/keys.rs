@@ -224,7 +224,7 @@ impl Eq for Key {}
 impl PartialOrd for Key {
     /// See [`Ord`].
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.id.partial_cmp(&other.id)
+        Some(self.cmp(other))
     }
 }
 

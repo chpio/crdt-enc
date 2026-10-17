@@ -26,6 +26,8 @@ const SUPPORTED_DATA_VERSIONS: &[Uuid] = &[CURRENT_DATA_VERSION];
 /// The CRDT `Core` is parameterised over in these tests.
 type State = MVReg<u64, Uuid>;
 type TestCore = Core<State, MemStorage, MemProtector>;
+/// Every remote-meta value a mock's `set_remote_meta` was notified with, in order.
+type Notified = Arc<LockBox<Vec<Option<MVReg<VersionBytes, Uuid>>>>>;
 
 // ---------------------------------------------------------------------------------------------
 // fault injection
@@ -118,7 +120,7 @@ struct MemStorage {
     /// object-safe `dyn CoreSubHandle` interface rather than its inherent methods.
     handle: Arc<LockBox<Option<Box<dyn CoreSubHandle>>>>,
     /// Every value `Storage::set_remote_meta` was notified with, in order.
-    notified: Arc<LockBox<Vec<Option<MVReg<VersionBytes, Uuid>>>>>,
+    notified: Notified,
 }
 
 impl MemStorage {
@@ -342,7 +344,7 @@ struct MemProtector {
     fault: Arc<LockBox<Option<ProtectorFault>>>,
     garble: Arc<LockBox<Option<Garble>>>,
     handle: Arc<LockBox<Option<Box<dyn CoreSubHandle>>>>,
-    notified: Arc<LockBox<Vec<Option<MVReg<VersionBytes, Uuid>>>>>,
+    notified: Notified,
 }
 
 impl MemProtector {
@@ -407,8 +409,8 @@ struct Device {
     tamper: Arc<LockBox<Option<Tamper>>>,
     garble: Arc<LockBox<Option<Garble>>>,
     storage_handle: Arc<LockBox<Option<Box<dyn CoreSubHandle>>>>,
-    storage_notified: Arc<LockBox<Vec<Option<MVReg<VersionBytes, Uuid>>>>>,
-    protector_notified: Arc<LockBox<Vec<Option<MVReg<VersionBytes, Uuid>>>>>,
+    storage_notified: Notified,
+    protector_notified: Notified,
 }
 
 impl Device {

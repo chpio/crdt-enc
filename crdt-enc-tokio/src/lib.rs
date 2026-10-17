@@ -76,6 +76,7 @@ impl Storage {
         let lock_path = self.local_path.join(".lock");
         let lock_file = fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&lock_path)
             .await
@@ -247,7 +248,7 @@ impl crdt_enc::storage::Storage for Storage {
             .iter()
             .map(|name| {
                 let mut path = self.remote_path.join("states");
-                path.push(&name);
+                path.push(name);
                 let path = path;
 
                 async move {

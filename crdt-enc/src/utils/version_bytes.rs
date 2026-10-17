@@ -350,7 +350,7 @@ impl<'a> Buf for VersionBytesBuf<'a> {
     /// Fills `dst` with up to two vectored slices: the remaining version tag and/or the remaining
     /// content, whichever haven't been fully read yet.
     fn chunks_vectored<'b>(&'b self, dst: &mut [IoSlice<'b>]) -> usize {
-        if dst.len() == 0 {
+        if dst.is_empty() {
             return 0;
         }
 

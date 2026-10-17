@@ -362,7 +362,7 @@ where
                 .state
                 .next_op_versions
                 .iter()
-                .map(|dot| (dot.actor.clone(), dot.counter - 1))
+                .map(|dot| (*dot.actor, dot.counter - 1))
                 .collect();
 
             Ok((plain, states_to_remove, ops_to_remove))
