@@ -129,32 +129,34 @@ impl PasswordKeySlot {
     async fn own_salt_kek(&self) -> Result<([u8; SALT_LEN], Kek)> {
         let params = self.params;
 
-        if let Some(pair) = self.unwrap_cache.with(|cache| {
+        let cached = self.unwrap_cache.with(|cache| {
             cache
                 .iter()
                 .filter(|((_, entry_params), _)| *entry_params == params)
                 .min_by(|a, b| a.0.0.cmp(&b.0.0))
                 .map(|((salt, _), kek)| (*salt, kek.clone()))
-        }) {
-            return Ok(pair);
+        });
+        match cached {
+            Some(pair) => Ok(pair),
+            None => {
+                let password = self.password.clone();
+
+                let (salt, kek) = spawn_blocking(move || {
+                    let mut salt = [0u8; SALT_LEN];
+                    rng()
+                        .try_fill_bytes(&mut salt)
+                        .context("Unable to get random data for salt")?;
+                    let kek = derive_kek(&password, &salt, params)?;
+                    Result::<_, Error>::Ok((salt, kek))
+                })
+                .await??;
+
+                self.unwrap_cache
+                    .with(|cache| cache.insert((salt, params), kek.clone()));
+
+                Ok((salt, kek))
+            }
         }
-
-        let password = self.password.clone();
-
-        let (salt, kek) = spawn_blocking(move || {
-            let mut salt = [0u8; SALT_LEN];
-            rng()
-                .try_fill_bytes(&mut salt)
-                .context("Unable to get random data for salt")?;
-            let kek = derive_kek(&password, &salt, params)?;
-            Result::<_, Error>::Ok((salt, kek))
-        })
-        .await??;
-
-        self.unwrap_cache
-            .with(|cache| cache.insert((salt, params), kek.clone()));
-
-        Ok((salt, kek))
     }
 }
 
