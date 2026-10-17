@@ -9,6 +9,29 @@ permissions:
   contents: read
 
 jobs:
+  # the fast checks that don't compile, in parallel to the test job. Each runs even if one before
+  # failed, so a run reports all of them.
+  check:
+    runs-on: ubuntu-latest
+    # built in the git/images repo, meant to float like in the test job
+    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest # zizmor: ignore[unpinned-images]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: cargo fmt --check
+      - if: ${{ !cancelled() }}
+        run: cargo deny --locked check
+      - if: ${{ !cancelled() }}
+        run: cargo machete
+      - if: ${{ !cancelled() }}
+        run: typos
+      # both only look into .github/workflows on their own
+      - if: ${{ !cancelled() }}
+        run: actionlint .gitea/workflows/*.yaml
+      - if: ${{ !cancelled() }}
+        run: zizmor --offline .gitea/workflows/*.yaml
+
   test:
     runs-on: ubuntu-latest
     # built in the git/images repo
@@ -21,7 +44,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       # only the doctests here: cargo-llvm-cov skips them on stable, and runs every other test below
       - run: cargo test --doc --locked

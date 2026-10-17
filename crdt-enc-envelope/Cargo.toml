@@ -31,3 +31,7 @@ path = "../crdt-enc"
 crdt-enc-tokio = { path = "../crdt-enc-tokio" }
 tokio = { version = "1", features = ["macros", "sync"] }
 tempfile = "3"
+
+[package.metadata.cargo-machete]
+# only used through #[serde(with = "serde_bytes")], which cargo-machete does not see
+ignored = ["serde_bytes"]

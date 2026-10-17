@@ -1,0 +1,17 @@
+# cargo-deny config (https://embarkstudios.github.io/cargo-deny/), run in CI by `cargo deny check`
+
+[advisories]
+# the defaults: vulnerabilities, unmaintained and unsound crates fail, yanked crates warn
+
+[licenses]
+# Unicode-3.0 comes in through unicode-ident, CC0-1.0 through tiny-keccak; every other license in
+# the tree is only an alternative to one of these
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "CC0-1.0"]
+
+[bans]
+# several versions of one crate are often unavoidable (e.g. syn 2 and 3), so they only warn
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
