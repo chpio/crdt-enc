@@ -160,15 +160,28 @@ async fn remote_meta_round_trips_through_a_content_addressed_name() {
     assert_eq!(storage.list_remote_meta_names().await.unwrap(), vec![other]);
 }
 
+/// A name that has vanished since it was listed -- another device's compaction deleted it in
+/// between -- is skipped rather than reported: its content lives on in whatever superseded it. A
+/// file that is there but can't be read or parsed is still a real error.
 #[tokio::test]
-async fn remote_meta_load_reports_missing_and_unparsable_files() {
+async fn remote_meta_load_skips_vanished_but_reports_broken_files() {
     let tmp = tempfile::tempdir().unwrap();
     let (storage, remote) = open(tmp.path());
 
-    storage.store_remote_meta(blob(b"meta")).await.unwrap();
+    let name = storage.store_remote_meta(blob(b"meta")).await.unwrap();
 
+    let loaded = storage
+        .load_remote_metas(vec![name.clone(), "not-there".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].0, name);
+
+    fs::create_dir_all(remote.join("meta").join("a-directory"))
+        .await
+        .unwrap();
     let err = storage
-        .load_remote_metas(vec!["not-there".to_string()])
+        .load_remote_metas(vec!["a-directory".to_string()])
         .await
         .unwrap_err();
     assert!(err.to_string().contains("failed reading"), "got: {}", err);
@@ -284,15 +297,28 @@ async fn states_round_trip_and_can_be_removed() {
     assert_eq!(storage.list_state_names().await.unwrap().len(), 1);
 }
 
+/// A name that has vanished since it was listed -- another device's compaction deleted it in
+/// between -- is skipped rather than reported: its content lives on in whatever superseded it. A
+/// file that is there but can't be read or parsed is still a real error.
 #[tokio::test]
-async fn state_load_reports_missing_and_unparsable_files() {
+async fn state_load_skips_vanished_but_reports_broken_files() {
     let tmp = tempfile::tempdir().unwrap();
     let (storage, remote) = open(tmp.path());
 
-    storage.store_state(blob(b"state")).await.unwrap();
+    let name = storage.store_state(blob(b"state")).await.unwrap();
 
+    let loaded = storage
+        .load_states(vec![name.clone(), "not-there".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].0, name);
+
+    fs::create_dir_all(remote.join("states").join("a-directory"))
+        .await
+        .unwrap();
     let err = storage
-        .load_states(vec!["not-there".to_string()])
+        .load_states(vec!["a-directory".to_string()])
         .await
         .unwrap_err();
     assert!(err.to_string().contains("failed reading"), "got: {}", err);

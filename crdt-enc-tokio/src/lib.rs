@@ -148,7 +148,8 @@ impl crdt_enc::storage::Storage for Storage {
             .await
     }
 
-    /// Reads the given files under `<remote_path>/meta/`, up to 32 concurrently.
+    /// Reads the given files under `<remote_path>/meta/`, up to 32 concurrently, skipping any that
+    /// no longer exist.
     async fn load_remote_metas(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("meta");
@@ -156,17 +157,24 @@ impl crdt_enc::storage::Storage for Storage {
             let path = path;
 
             async move {
-                let bytes = fs::read(&path).await.with_context(|| {
+                let Some(bytes) = read_file_optional(&path).await.with_context(|| {
                     format!("failed reading remote meta file {}", path.display())
-                })?;
+                })?
+                else {
+                    return Ok(None);
+                };
                 let rm = VersionBytes::deserialize(&bytes).with_context(|| {
                     format!("failed parsing remote meta file {}", path.display())
                 })?;
-                Ok((name, rm))
+                Ok(Some((name, rm)))
             }
         });
 
-        stream::iter(futs).buffer_unordered(32).try_collect().await
+        stream::iter(futs)
+            .buffer_unordered(32)
+            .try_filter_map(|loaded| async move { Ok(loaded) })
+            .try_collect()
+            .await
     }
 
     /// Writes a new content-addressed file under `<remote_path>/meta/`, named by the hash of its
@@ -216,7 +224,8 @@ impl crdt_enc::storage::Storage for Storage {
             .await
     }
 
-    /// Reads the given files under `<remote_path>/states/`, up to 32 concurrently.
+    /// Reads the given files under `<remote_path>/states/`, up to 32 concurrently, skipping any
+    /// that no longer exist.
     async fn load_states(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("states");
@@ -224,16 +233,23 @@ impl crdt_enc::storage::Storage for Storage {
             let path = path;
 
             async move {
-                let block = fs::read(&path)
+                let Some(block) = read_file_optional(&path)
                     .await
-                    .with_context(|| format!("failed reading state file {}", path.display()))?;
+                    .with_context(|| format!("failed reading state file {}", path.display()))?
+                else {
+                    return Ok(None);
+                };
                 let block = VersionBytes::deserialize(&block)
                     .with_context(|| format!("failed parsing state file {}", path.display()))?;
-                Ok((name, block))
+                Ok(Some((name, block)))
             }
         });
 
-        stream::iter(futs).buffer_unordered(32).try_collect().await
+        stream::iter(futs)
+            .buffer_unordered(32)
+            .try_filter_map(|loaded| async move { Ok(loaded) })
+            .try_collect()
+            .await
     }
 
     /// Writes a new content-addressed file under `<remote_path>/states/`, named by the hash of its

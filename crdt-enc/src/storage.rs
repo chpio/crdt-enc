@@ -44,7 +44,9 @@ where
     /// published one), for [`Self::load_remote_metas`] to load and [`crate::Core`] to merge.
     fn list_remote_meta_names(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
 
-    /// Loads the given remote-meta blobs by name, paired with the name each was loaded under.
+    /// Loads the given remote-meta blobs by name, paired with the name each was loaded under. A name
+    /// that no longer exists is skipped rather than reported: another device may have deleted the
+    /// blob since [`Self::list_remote_meta_names`] listed it, after superseding it with a newer one.
     fn load_remote_metas(
         &self,
         names: Vec<String>,
@@ -61,7 +63,10 @@ where
     /// Lists the names of all currently-stored full-state snapshots.
     fn list_state_names(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
 
-    /// Loads the given full-state snapshots by name, paired with the name each was loaded under.
+    /// Loads the given full-state snapshots by name, paired with the name each was loaded under. A
+    /// name that no longer exists is skipped rather than reported: another device's compaction may
+    /// have deleted the snapshot since [`Self::list_state_names`] listed it, after writing a newer
+    /// one that contains it.
     fn load_states(
         &self,
         names: Vec<String>,

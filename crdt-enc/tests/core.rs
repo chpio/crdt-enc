@@ -206,25 +206,22 @@ impl Storage for MemStorage {
     async fn load_remote_metas(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         self.fault_if(StorageFault::LoadRemoteMetas)?;
         let tamper = self.tamper();
-        self.remote.try_with(|remote| {
+        // per the `Storage` contract, a name deleted since it was listed is skipped
+        Ok(self.remote.with(|remote| {
             names
                 .into_iter()
-                .map(|name| {
-                    let blob = remote
-                        .metas
-                        .get(&name)
-                        .cloned()
-                        .ok_or_else(|| Error::msg(format!("no remote meta {}", name)))?;
+                .filter_map(|name| {
+                    let blob = remote.metas.get(&name).cloned()?;
                     let blob = match tamper {
                         Some(Tamper::RemoteMetaBody) => {
                             VersionBytes::new(blob.version(), vec![0xc1])
                         }
                         _ => self.maybe_retag(blob),
                     };
-                    Ok((name, blob))
+                    Some((name, blob))
                 })
-                .collect::<Result<Vec<_>>>()
-        })
+                .collect()
+        }))
     }
 
     async fn store_remote_meta(&self, data: VersionBytes) -> Result<String> {
@@ -262,19 +259,16 @@ impl Storage for MemStorage {
 
     async fn load_states(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         self.fault_if(StorageFault::LoadStates)?;
-        self.remote.try_with(|remote| {
+        // per the `Storage` contract, a name deleted since it was listed is skipped
+        Ok(self.remote.with(|remote| {
             names
                 .into_iter()
-                .map(|name| {
-                    let blob = remote
-                        .states
-                        .get(&name)
-                        .cloned()
-                        .ok_or_else(|| Error::msg(format!("no state {}", name)))?;
-                    Ok((name, self.maybe_retag(blob)))
+                .filter_map(|name| {
+                    let blob = remote.states.get(&name).cloned()?;
+                    Some((name, self.maybe_retag(blob)))
                 })
-                .collect::<Result<Vec<_>>>()
-        })
+                .collect()
+        }))
     }
 
     async fn store_state(&self, data: VersionBytes) -> Result<String> {

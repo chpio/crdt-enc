@@ -2,7 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* ensure concurrently deleted files (between storage::list and storage::load) do not crash core
 * `Core::open` should `ensure!` that `current_data_version` is in `supported_data_versions` --
   otherwise `Core` writes data it can't read back itself. Also `OpenOptions` docs ask for a sorted
   list, but `open` sorts it anyway.
