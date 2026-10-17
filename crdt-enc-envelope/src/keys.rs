@@ -1,5 +1,5 @@
 use crate::utils::AtRest;
-use ::anyhow::Result;
+use ::anyhow::{Context, Result};
 use ::crdt_enc::utils::{SecretBytes, VersionBytes, VersionBytesRef};
 use ::crdts::{CmRDT, CvRDT, MVReg, Orswot};
 use ::serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -49,20 +49,23 @@ impl Keys {
     /// The key new content should be encrypted with, or `None` if no key has ever been established.
     /// If `latest_key_id` concurrently holds more than one value (two devices bootstrapped or
     /// rotated at the same time before syncing), deterministically picks the smallest by id so
-    /// every device converges on the same answer. Panics if `latest_key_id` names a key that isn't
-    /// in `keys` -- a bug in whatever inserted it, since [`Self::insert_latest_key`] always adds
-    /// both together.
-    pub fn latest_key(&self) -> Option<Key> {
+    /// every device converges on the same answer. Fails if `latest_key_id` names a key that isn't
+    /// in `keys`: [`Self::insert_latest_key`] always adds both together, so such a [`Keys`] was
+    /// built by something else -- and since it arrives through synced data, that is an error to
+    /// report, not a reason to bring the whole process down.
+    pub fn latest_key(&self) -> Result<Option<Key>> {
         let mut keys = self.keys.read().val;
-        self.latest_key_id
+        let latest_keys = self
+            .latest_key_id
             .read()
             .val
             .into_iter()
-            .map(move |id| {
+            .map(|id| {
                 keys.take(&id)
-                    .unwrap_or_else(|| panic!("Could not find key for latest key id {}", id))
+                    .with_context(|| format!("no key for latest key id {id}"))
             })
-            .min()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(latest_keys.into_iter().min())
     }
 
     /// Adds `new_key` to the known key set and marks it as the latest, as one atomic pair of CRDT

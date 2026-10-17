@@ -1,10 +1,5 @@
 Each list is ordered by priority, most important first.
 
-## Bugs
-
-* `Keys::latest_key` panics if `latest_key_id` names an unknown key; return a `Result` instead. Only
-  reachable with a valid KEK, so low priority.
-
 ## Security hardening
 
 * bind ciphertexts to their slot: `EnvelopeProtector::encrypt` uses no associated data, so anyone

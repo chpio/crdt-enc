@@ -429,3 +429,63 @@ async fn a_key_slot_payload_that_is_not_keys_is_refused() {
     .await;
     opened.unwrap_err();
 }
+
+/// A `Keys` whose latest key id names a key the set doesn't contain can't come out of
+/// `EnvelopeProtector` itself -- it always adds both together -- but it arrives through synced
+/// data, so a corrupted or hand-crafted one has to be reported as an error rather than panicking
+/// the whole process.
+#[tokio::test]
+async fn a_latest_key_id_without_a_key_is_refused() {
+    #[derive(Debug)]
+    struct DanglingLatestKeySlot;
+
+    impl KeySlotProtector for DanglingLatestKeySlot {
+        async fn wrap_key(&self, key: SecretBytes) -> Result<Vec<u8>> {
+            Ok(key.expose_secret().to_vec())
+        }
+
+        async fn unwrap_key(&self, _wrapped: Vec<u8>) -> Result<SecretBytes> {
+            let mut latest_key_id: MVReg<Uuid, Uuid> = MVReg::new();
+            let add_ctx = latest_key_id.read_ctx().derive_add_ctx(Uuid::nil());
+            let op = latest_key_id.write(Uuid::new_v4(), add_ctx);
+            ::crdts::CmRDT::apply(&mut latest_key_id, op);
+
+            let dangling = KeysWire {
+                latest_key_id,
+                keys: Orswot::new(),
+            };
+            Ok(SecretBytes::new(rmp_serde::to_vec_named(&dangling)?))
+        }
+    }
+
+    // as above: the writer publishes a genuine slot, which the reader's key slot then mangles
+    let tmp = tempfile::tempdir().unwrap();
+    let remote = tmp.path().join("remote");
+    let _writer: Arc<crdt_enc::Core<EmptyCrdt, Storage, EnvelopeProtector<NoopKeySlot>>> =
+        crdt_enc::Core::open(OpenOptions {
+            storage: Storage::new(tmp.path().join("writer"), remote.clone()).unwrap(),
+            protector: EnvelopeProtector::new(NoopKeySlot),
+            create: true,
+            supported_data_versions: SUPPORTED_DATA_VERSIONS.to_vec(),
+            current_data_version: CURRENT_DATA_VERSION,
+        })
+        .await
+        .unwrap();
+
+    let opened: Result<
+        Arc<crdt_enc::Core<EmptyCrdt, Storage, EnvelopeProtector<DanglingLatestKeySlot>>>,
+    > = crdt_enc::Core::open(OpenOptions {
+        storage: Storage::new(tmp.path().join("reader"), remote).unwrap(),
+        protector: EnvelopeProtector::new(DanglingLatestKeySlot),
+        create: true,
+        supported_data_versions: SUPPORTED_DATA_VERSIONS.to_vec(),
+        current_data_version: CURRENT_DATA_VERSION,
+    })
+    .await;
+    let err = opened.unwrap_err();
+    assert!(
+        format!("{:#}", err).contains("no key for latest key id"),
+        "got: {:#}",
+        err
+    );
+}

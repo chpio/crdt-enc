@@ -84,7 +84,7 @@ async fn rotation_keeps_previously_encrypted_data_readable() -> Result<()> {
 
 /// Two overlapping `rotate_key()` calls on the same `EnvelopeProtector` must not corrupt the
 /// `Keys` CRDT (e.g. via colliding CRDT dots for the same actor, which would silently drop one of
-/// the two new keys or trigger a panic in `Keys::latest_key`). Both calls must succeed, and the
+/// the two new keys or leave `Keys::latest_key` failing). Both calls must succeed, and the
 /// protector must remain fully usable afterwards.
 #[tokio::test]
 async fn concurrent_rotations_do_not_corrupt_keys() -> Result<()> {
@@ -105,7 +105,7 @@ async fn concurrent_rotations_do_not_corrupt_keys() -> Result<()> {
     r1?;
     r2?;
 
-    // still fully usable afterwards -- would panic (via `Keys::latest_key`) if the CRDT got
+    // still fully usable afterwards -- would fail (via `Keys::latest_key`) if the CRDT got
     // corrupted by the two rotations above
     core.read_and_apply(|s: &MVReg<u64, Uuid>| {
         let read_ctx = s.read();
