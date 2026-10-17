@@ -119,3 +119,36 @@ async fn concurrent_rotations_do_not_corrupt_keys() -> Result<()> {
 
     Ok(())
 }
+
+/// A rotation is only done once the new key is published for the other devices; until then nothing
+/// encrypted with it could be read anywhere else. So a publish that fails (here: `meta/` replaced
+/// by a plain file, so nothing can be written into it -- unlike permission bits, that holds for
+/// root too) has to fail `rotate_key` too, instead of reporting success.
+#[tokio::test]
+async fn a_rotation_that_cannot_be_published_is_reported() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let remote = tmp.path().join("remote");
+    let core: std::sync::Arc<crdt_enc::Core<MVReg<u64, Uuid>, _, _>> =
+        crdt_enc::Core::open(OpenOptions {
+            storage: Storage::new(tmp.path().join("device"), remote.clone())?,
+            protector: EnvelopeProtector::new(NoopKeySlot),
+            create: true,
+            supported_data_versions: SUPPORTED_DATA_VERSIONS.to_vec(),
+            current_data_version: CURRENT_DATA_VERSION,
+        })
+        .await?;
+
+    // the bootstrap already published a key into `meta/`
+    let meta = remote.join("meta");
+    std::fs::remove_dir_all(&meta)?;
+    std::fs::write(&meta, b"not a directory")?;
+
+    let err = core.protector().rotate_key().await.unwrap_err();
+    assert!(
+        format!("{:#}", err).contains("failed writing remote meta file"),
+        "got: {:#}",
+        err
+    );
+
+    Ok(())
+}

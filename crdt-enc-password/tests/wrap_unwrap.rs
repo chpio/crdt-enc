@@ -179,6 +179,51 @@ async fn instance_that_saw_a_wrap_converges_on_its_salt() {
     assert_eq!(salt_a.salt, salt_b.salt);
 }
 
+/// With several salts known under its own parameters, an instance wraps with the smallest one.
+/// That is the tiebreak every device applies, so they all end up on the same salt regardless of
+/// the order they saw the others in -- picking, say, the first one seen would let each device
+/// stick with a different salt forever.
+#[tokio::test]
+async fn instance_that_saw_several_salts_converges_on_the_smallest() {
+    #[derive(::serde::Deserialize)]
+    struct EnvelopeSalt {
+        #[serde(with = "serde_bytes")]
+        salt: Vec<u8>,
+    }
+
+    fn salt_of(wrapped: &[u8]) -> Vec<u8> {
+        let version_box = ::crdt_enc::utils::VersionBytesRef::deserialize(wrapped).unwrap();
+        let envelope: EnvelopeSalt = rmp_serde::from_slice(version_box.as_ref()).unwrap();
+        envelope.salt
+    }
+
+    let key = b"secret key bytes";
+
+    // three instances that never synced, each minting its own salt
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let isolated = fast_key_slot("shared password");
+        seen.push(
+            isolated
+                .wrap_key(SecretBytes::new(key.to_vec()))
+                .await
+                .unwrap(),
+        );
+    }
+
+    let observer = fast_key_slot("shared password");
+    for wrapped in &seen {
+        observer.unwrap_key(wrapped.clone()).await.unwrap();
+    }
+    let own = observer
+        .wrap_key(SecretBytes::new(key.to_vec()))
+        .await
+        .unwrap();
+
+    let smallest = seen.iter().map(|wrapped| salt_of(wrapped)).min().unwrap();
+    assert_eq!(salt_of(&own), smallest);
+}
+
 /// Salt convergence must stay within one set of Argon2 parameters. A device that adopted a salt
 /// seen under *other* parameters used to reuse that device's cached key while labelling its own
 /// envelope with its own parameters -- an envelope nobody could unwrap without that exact cache

@@ -731,6 +731,31 @@ async fn local_meta_that_cannot_be_written_is_reported() {
     );
 }
 
+/// Local meta is staged in a temporary file next to its destination before it replaces the old
+/// one. If even that can't be created (here: the local directory was swapped for a plain file
+/// after the lock was taken -- unlike permission bits, that holds for root too), the write has to
+/// be reported rather than treated as done: `Core` would otherwise believe a fresh device identity
+/// is stored that a restart will never find.
+#[cfg(unix)]
+#[tokio::test]
+async fn local_meta_whose_temporary_file_cannot_be_created_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let local = tmp.path().join("local");
+    let storage = Storage::new(local.clone(), tmp.path().join("remote")).unwrap();
+
+    // takes the lock, so the swap below doesn't trip over it instead
+    storage.load_local_meta().await.unwrap();
+    fs::remove_dir_all(&local).await.unwrap();
+    fs::write(&local, b"not a directory").await.unwrap();
+
+    let err = storage.store_local_meta(blob(b"x")).await.unwrap_err();
+    assert!(
+        err.to_string().contains("failed writing local meta file"),
+        "got: {}",
+        err
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // failures around the remote tree
 // ---------------------------------------------------------------------------------------------
