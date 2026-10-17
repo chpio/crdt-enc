@@ -142,7 +142,7 @@ impl crdt_enc::storage::Storage for Storage {
 
     /// Reads the given files under `<remote_path>/meta/`, up to 32 concurrently, skipping any that
     /// no longer exist. Fails if a file's content doesn't hash to its name (see
-    /// [`ensure_content_address`]).
+    /// `ensure_content_address`, private, so not linked).
     async fn load_remote_metas(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("meta");
@@ -212,7 +212,7 @@ impl crdt_enc::storage::Storage for Storage {
 
     /// Reads the given files under `<remote_path>/states/`, up to 32 concurrently, skipping any
     /// that no longer exist. Fails if a file's content doesn't hash to its name (see
-    /// [`ensure_content_address`]).
+    /// `ensure_content_address`, private, so not linked).
     async fn load_states(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("states");
