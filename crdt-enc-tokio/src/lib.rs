@@ -122,7 +122,7 @@ impl crdt_enc::storage::Storage for Storage {
 
         let path = self.local_path.join("meta-data.msgpack");
         // TODO: catch concurrent writes, locking?
-        write_file(&path, meta.buf())
+        write_file(&self.local_path, "meta-data.msgpack", meta.buf())
             .await
             .with_context(|| format!("failed writing local meta file {:?}", path))?;
         Ok(())
@@ -355,17 +355,16 @@ impl crdt_enc::storage::Storage for Storage {
     /// (`write_new_file`) -- callers must supply strictly ascending, contiguous versions per
     /// actor.
     async fn store_ops(&self, actor: Uuid, version: u64, bytes: VersionBytes) -> Result<()> {
-        let mut path = self.remote_path.join("ops");
-        path.push(actor.to_string());
+        let dir = self.remote_path.join("ops").join(actor.to_string());
 
-        fs::create_dir_all(&path)
+        fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("failed creating op dir {:?} for actor {}", path, actor))?;
+            .with_context(|| format!("failed creating op dir {:?} for actor {}", dir, actor))?;
 
-        path.push(version.to_string());
-        write_new_file(&path, bytes.buf())
+        let name = version.to_string();
+        write_new_file(&dir, &name, bytes.buf())
             .await
-            .with_context(|| format!("failed writing ops file {:?}", path))?;
+            .with_context(|| format!("failed writing ops file {:?}", dir.join(&name)))?;
         Ok(())
     }
 
@@ -426,40 +425,34 @@ fn actor_dir_name(name: &OsStr) -> Option<Uuid> {
     (actor.hyphenated().to_string() == name).then_some(actor)
 }
 
-/// Writes `buf` to `path`, atomically replacing whatever was there before: a crash leaves either
-/// the old content or the new one, never a truncated file.
-async fn write_file(path: &Path, buf: impl Buf) -> io::Result<()> {
-    let tmp_path = write_temp_file(path, buf).await?;
-    if let Err(err) = fs::rename(&tmp_path, path).await {
+/// Writes `buf` to `dir`/`name`, atomically replacing whatever was there before: a crash leaves
+/// either the old content or the new one, never a truncated file.
+async fn write_file(dir: &Path, name: &str, buf: impl Buf) -> io::Result<()> {
+    let tmp_path = write_temp_file(dir, buf).await?;
+    if let Err(err) = fs::rename(&tmp_path, dir.join(name)).await {
         let _ = fs::remove_file(&tmp_path).await;
         return Err(err);
     }
-    sync_parent_dir(path).await
+    sync_dir(dir).await
 }
 
-/// Writes `buf` to `path`, failing with [`io::ErrorKind::AlreadyExists`] if `path` already exists
-/// (for content that must never be silently overwritten, e.g. ops). Like [`write_file`], `path`
-/// only ever appears complete: the content is moved into place with a hard link, which -- unlike a
-/// rename -- refuses to replace an existing file.
-async fn write_new_file(path: &Path, buf: impl Buf) -> io::Result<()> {
-    let tmp_path = write_temp_file(path, buf).await?;
-    let linked = fs::hard_link(&tmp_path, path).await;
+/// Writes `buf` to `dir`/`name`, failing with [`io::ErrorKind::AlreadyExists`] if that already
+/// exists (for content that must never be silently overwritten, e.g. ops). Like [`write_file`],
+/// the file only ever appears complete: the content is moved into place with a hard link, which --
+/// unlike a rename -- refuses to replace an existing file.
+async fn write_new_file(dir: &Path, name: &str, buf: impl Buf) -> io::Result<()> {
+    let tmp_path = write_temp_file(dir, buf).await?;
+    let linked = fs::hard_link(&tmp_path, dir.join(name)).await;
     let removed = fs::remove_file(&tmp_path).await;
     linked?;
     removed?;
-    sync_parent_dir(path).await
+    sync_dir(dir).await
 }
 
-/// Writes `buf` to a fresh temporary file in `path`'s directory (so moving it into place never
-/// crosses a filesystem), flushes and fsyncs it, and returns its path. Removes the temporary file
-/// again if any of that fails.
-async fn write_temp_file(path: &Path, mut buf: impl Buf) -> io::Result<PathBuf> {
-    let dir = path.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} has no parent directory", path.display()),
-        )
-    })?;
+/// Writes `buf` to a fresh temporary file in `dir` -- the destination's own directory, so moving
+/// it into place never crosses a filesystem -- flushes and fsyncs it, and returns its path. Removes
+/// the temporary file again if any of that fails.
+async fn write_temp_file(dir: &Path, mut buf: impl Buf) -> io::Result<PathBuf> {
     let tmp_path = dir.join(format!("{TEMP_FILE_PREFIX}{}", Uuid::new_v4()));
 
     let written = async {
@@ -489,20 +482,17 @@ async fn write_temp_file(path: &Path, mut buf: impl Buf) -> io::Result<PathBuf> 
     }
 }
 
-/// Fsyncs `path`'s parent directory, so the directory entry a rename/hard link just created is as
-/// durable as the file content behind it.
+/// Fsyncs `dir`, so the directory entry a rename/hard link just created in it is as durable as the
+/// file content behind it.
 #[cfg(unix)]
-async fn sync_parent_dir(path: &Path) -> io::Result<()> {
-    match path.parent() {
-        Some(dir) => fs::File::open(dir).await?.sync_all().await,
-        None => Ok(()),
-    }
+async fn sync_dir(dir: &Path) -> io::Result<()> {
+    fs::File::open(dir).await?.sync_all().await
 }
 
 /// Directories can't be opened for an fsync outside Unix; the rename/hard link itself is all there
 /// is.
 #[cfg(not(unix))]
-async fn sync_parent_dir(_path: &Path) -> io::Result<()> {
+async fn sync_dir(_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -613,7 +603,7 @@ async fn write_content_addressible_file(
         .await
         .with_context(|| format!("failed creating dir {}", dir_path.display()))?;
     let file_path = dir_path.join(&block_id);
-    match write_new_file(&file_path, bytes.buf()).await {
+    match write_new_file(dir_path, &block_id, bytes.buf()).await {
         // the name *is* the hash of the content, so a file already sitting there holds exactly
         // these bytes -- there is nothing to write. Callers legitimately produce identical content
         // twice (a device republishing a `RemoteMeta` nothing has changed, say), and failing there
