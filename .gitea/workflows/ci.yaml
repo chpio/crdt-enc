@@ -45,6 +45,12 @@ jobs:
         with:
           persist-credentials: false
       - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # the msrv toolchain comes with the image, the version is read from Cargo.toml. Only the
+      # libraries and binaries, the dev-dependencies may need a newer rust.
+      - run: cargo "+$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" check --workspace --locked
       # only the doctests here: cargo-llvm-cov skips them on stable, and runs every other test below
       - run: cargo test --doc --locked
       - run: cargo cov --locked --fail-under-lines 97
