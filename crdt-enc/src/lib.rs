@@ -640,20 +640,29 @@ where
     }
 
     /// Serializes the current merged `remote_meta` and writes it as a new immutable blob, then
-    /// removes every previously-written remote-meta blob from this device (they're all superseded
-    /// by the one just written, which already reflects everything they contained).
+    /// removes the remote-meta blobs it supersedes: exactly those already merged when the snapshot
+    /// was taken, since the blob just written reflects everything they contained. Blobs merged in
+    /// while the write was in flight are not part of it and stay, as does the new blob itself when
+    /// content-addressed storage hands back the name of one it already had.
     async fn store_remote_meta(self: &Arc<Self>) -> Result<()> {
-        let vbox = self.data.try_with(|data| {
+        let (vbox, superseded) = self.data.try_with(|data| {
             let bytes = rmp_serde::to_vec_named(&data.remote_meta)?;
-            Ok(VersionBytes::new(CURRENT_VERSION, bytes))
+            let superseded: Vec<String> = data.read_remote_metas.iter().cloned().collect();
+            Ok((VersionBytes::new(CURRENT_VERSION, bytes), superseded))
         })?;
 
         let new_name = self.storage.store_remote_meta(vbox).await?;
 
-        let names_to_remove = self.data.with(|data| {
-            let names_to_remove = data.read_remote_metas.drain().collect();
+        let names_to_remove: Vec<String> = superseded
+            .into_iter()
+            .filter(|name| *name != new_name)
+            .collect();
+
+        self.data.with(|data| {
+            for name in &names_to_remove {
+                data.read_remote_metas.remove(name);
+            }
             data.read_remote_metas.insert(new_name);
-            names_to_remove
         });
 
         self.storage.remove_remote_metas(names_to_remove).await?;

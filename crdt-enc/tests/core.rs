@@ -80,6 +80,15 @@ enum Tamper {
     OpGap,
 }
 
+/// Work of `Core`'s own, run from *inside* a storage call so it lands in exactly the `.await`
+/// window a test wants to race against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Interleave {
+    /// While `store_remote_meta` is in flight, re-read remote meta through the sub-handle -- what
+    /// a concurrent `read_remote_meta` call from the app looks like.
+    ReadRemoteMetaDuringStore,
+}
+
 /// How the protector should mangle the plaintext it hands back, to exercise `Core`'s checks on the
 /// *inner* payload it just decrypted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +125,8 @@ struct MemStorage {
     remote: Arc<LockBox<Remote>>,
     fault: Arc<LockBox<Option<StorageFault>>>,
     tamper: Arc<LockBox<Option<Tamper>>>,
+    /// Fires once, then disarms itself.
+    interleave: Arc<LockBox<Option<Interleave>>>,
     /// The handle handed to `Storage::init`, kept so a test can drive `Core` through the
     /// object-safe `dyn CoreSubHandle` interface rather than its inherent methods.
     handle: Arc<LockBox<Option<Box<dyn CoreSubHandle>>>>,
@@ -221,6 +232,14 @@ impl Storage for MemStorage {
         let name = self.fresh_name();
         self.remote
             .with(|remote| remote.metas.insert(name.clone(), data));
+
+        if self.interleave.with(|slot| slot.take()) == Some(Interleave::ReadRemoteMetaDuringStore) {
+            let handle = self
+                .handle
+                .with(|handle| dyn_clone::clone_box(&**handle.as_ref().expect("init has run")));
+            handle.read_remote_meta().await?;
+        }
+
         Ok(name)
     }
 
@@ -407,6 +426,7 @@ struct Device {
     storage_fault: Arc<LockBox<Option<StorageFault>>>,
     protector_fault: Arc<LockBox<Option<ProtectorFault>>>,
     tamper: Arc<LockBox<Option<Tamper>>>,
+    interleave: Arc<LockBox<Option<Interleave>>>,
     garble: Arc<LockBox<Option<Garble>>>,
     storage_handle: Arc<LockBox<Option<Box<dyn CoreSubHandle>>>>,
     storage_notified: Notified,
@@ -453,6 +473,10 @@ impl Device {
         self.tamper.with(|slot| *slot = tamper);
     }
 
+    fn arm_interleave(&self, interleave: Option<Interleave>) {
+        self.interleave.with(|slot| *slot = interleave);
+    }
+
     fn arm_garble(&self, garble: Option<Garble>) {
         self.garble.with(|slot| *slot = garble);
     }
@@ -469,6 +493,7 @@ struct Builder {
     storage_fault: Arc<LockBox<Option<StorageFault>>>,
     protector_fault: Arc<LockBox<Option<ProtectorFault>>>,
     tamper: Arc<LockBox<Option<Tamper>>>,
+    interleave: Arc<LockBox<Option<Interleave>>>,
     garble: Arc<LockBox<Option<Garble>>>,
 }
 
@@ -488,6 +513,7 @@ impl Builder {
             storage_fault: Arc::new(LockBox::new(None)),
             protector_fault: Arc::new(LockBox::new(None)),
             tamper: Arc::new(LockBox::new(None)),
+            interleave: Arc::new(LockBox::new(None)),
             garble: Arc::new(LockBox::new(None)),
         }
     }
@@ -527,6 +553,7 @@ impl Builder {
             remote: self.remote.clone(),
             fault: self.storage_fault.clone(),
             tamper: self.tamper.clone(),
+            interleave: self.interleave.clone(),
             handle: storage_handle.clone(),
             notified: storage_notified.clone(),
         };
@@ -552,6 +579,7 @@ impl Builder {
             storage_fault: self.storage_fault.clone(),
             protector_fault: self.protector_fault.clone(),
             tamper: self.tamper.clone(),
+            interleave: self.interleave.clone(),
             garble: self.garble.clone(),
             storage_handle,
             storage_notified,
@@ -1029,6 +1057,50 @@ async fn remote_meta_published_by_one_device_reaches_the_other() {
     );
 }
 
+/// A blob merged in while this device's own publish is in flight isn't part of the blob that
+/// publish writes, so the cleanup after it must leave it alone -- otherwise the other device's
+/// metadata (for `EnvelopeProtector`: its wrapped content key) is gone from storage.
+#[tokio::test]
+async fn remote_meta_merged_during_a_publish_survives_its_cleanup() {
+    const META_VERSION: Uuid = Uuid::from_u128(0x_5b7e1c02_4d9a_47f3_8c60_0a2b6e91d4f7);
+
+    let builder = Builder::new();
+    let a = builder.open().await.unwrap();
+    let b = Builder::joining(builder.remote.clone())
+        .open()
+        .await
+        .unwrap();
+
+    b.sub_handle()
+        .set_remote_meta_protector(meta_reg(b.actor(), META_VERSION, b"from-b"))
+        .await
+        .unwrap();
+
+    // `a` only learns about `b`'s blob mid-publish, after its own snapshot was taken
+    a.arm_interleave(Some(Interleave::ReadRemoteMetaDuringStore));
+    a.sub_handle()
+        .set_remote_meta_protector(meta_reg(a.actor(), META_VERSION, b"from-a"))
+        .await
+        .unwrap();
+
+    let c = Builder::joining(builder.remote.clone())
+        .open()
+        .await
+        .unwrap();
+    let protector_seen = c
+        .protector_notified
+        .with(|seen| seen.last().cloned().flatten())
+        .expect("protector should have been notified with a value");
+    let mut payloads: Vec<Vec<u8>> = protector_seen
+        .read()
+        .val
+        .iter()
+        .map(|vb| vb.as_ref().to_vec())
+        .collect();
+    payloads.sort();
+    assert_eq!(payloads, vec![b"from-a".to_vec(), b"from-b".to_vec()]);
+}
+
 /// A re-read with nothing new must not re-notify: implementations treat a `set_remote_meta` call
 /// as "something changed" and would redo work (an Argon2 derivation, say) on every poll.
 #[tokio::test]
@@ -1201,6 +1273,7 @@ async fn a_protector_can_rely_on_the_default_lifecycle_hooks() {
         remote: remote.clone(),
         fault: Arc::new(LockBox::new(None)),
         tamper: Arc::new(LockBox::new(None)),
+        interleave: Arc::new(LockBox::new(None)),
         handle: Arc::new(LockBox::new(None)),
         notified: Arc::new(LockBox::new(Vec::new())),
     };
@@ -1280,6 +1353,7 @@ async fn a_crdt_that_cannot_be_serialized_fails_the_write_and_the_compaction() {
         remote: remote.clone(),
         fault: Arc::new(LockBox::new(None)),
         tamper: Arc::new(LockBox::new(None)),
+        interleave: Arc::new(LockBox::new(None)),
         handle: Arc::new(LockBox::new(None)),
         notified: Arc::new(LockBox::new(Vec::new())),
     };

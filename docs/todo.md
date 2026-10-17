@@ -2,13 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* crdt-enc: race in `Core::store_remote_meta`. It serializes `remote_meta`, `.await`s the
-  write, then drains and deletes *every* name in `read_remote_metas` -- including names merged in by
-  a concurrent `read_remote_meta_` during that `.await`, whose content is not in the blob just
-  written. Two concurrent calls (e.g. `rotate_key` racing `read_remote_meta`) can likewise delete
-  each other's newer blob, keeping the older, smaller one. The protector's wrapped keys live there,
-  so this can lose key material on disk. Fix: an async lock around merge + serialize + store +
-  delete, and only delete the names known at snapshot time.
 * crdt-enc-password: Argon2 params (`m_cost`/`t_cost`/`p_cost`) are taken from the envelope
   unchecked, before anything is authenticated -- anyone who can write to the sync folder can plant
   a meta file with `m_cost = u32::MAX` KiB (~4 TiB) and hang/OOM every device on `open`. Clamp to

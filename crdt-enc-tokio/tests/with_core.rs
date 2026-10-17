@@ -2,7 +2,7 @@
 //! its own: `Core` writes remote meta *unencrypted* and straight from a serialized `RemoteMeta`, so
 //! publishing a register that merges to something it already published produces byte-identical
 //! content -- and content-addressed storage then has to accept that as a no-op rather than a name
-//! collision. Nothing else in the workspace pairs a `Core` with the filesystem backend, so the
+//! collision, while `Core` must not then delete the very blob it just "wrote". Nothing else in the workspace pairs a `Core` with the filesystem backend, so the
 //! regression has no other home.
 
 use ::anyhow::Result;
@@ -58,6 +58,12 @@ async fn republishing_unchanged_remote_meta_is_not_a_name_collision() -> Result<
     // the second publish merges to exactly what the first one already wrote
     CoreSubHandle::set_remote_meta_protector(&core, reg.clone()).await?;
     CoreSubHandle::set_remote_meta_protector(&core, reg.clone()).await?;
+
+    // the second publish got back the name of the blob it supersedes, which must not be deleted
+    assert_eq!(
+        std::fs::read_dir(tmp.path().join("remote").join("meta"))?.count(),
+        1
+    );
 
     // the storage side is unchanged too: still one blob, still readable
     CoreSubHandle::set_remote_meta_storage(&core, reg).await?;
