@@ -425,6 +425,49 @@ async fn storing_the_same_op_version_twice_is_refused() {
     assert_eq!(ops[0].2.as_ref(), b"first");
 }
 
+/// Every write goes through a temporary file next to its destination, so a crash can never leave a
+/// truncated file under a real name. Those temporaries live in the synced tree, so they must be
+/// gone again once a write is over -- whether it landed or was refused.
+#[tokio::test]
+async fn writes_leave_no_temporary_files_behind() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (storage, remote) = open(tmp.path());
+    let actor = Uuid::new_v4();
+
+    storage.store_local_meta(blob(b"first")).await.unwrap();
+    storage.store_local_meta(blob(b"second")).await.unwrap();
+    storage.store_remote_meta(blob(b"meta")).await.unwrap();
+    storage.store_state(blob(b"state")).await.unwrap();
+    storage.store_state(blob(b"state")).await.unwrap();
+    storage.store_ops(actor, 0, blob(b"op")).await.unwrap();
+    storage
+        .store_ops(actor, 0, blob(b"refused"))
+        .await
+        .unwrap_err();
+
+    for dir in [
+        tmp.path().join("local"),
+        remote.join("meta"),
+        remote.join("states"),
+        remote.join("ops").join(actor.to_string()),
+    ] {
+        let mut entries = fs::read_dir(&dir).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name();
+            assert!(
+                !name.to_string_lossy().starts_with(".crdt-enc-tmp-"),
+                "temporary file {:?} left behind in {}",
+                name,
+                dir.display()
+            );
+        }
+    }
+
+    // the refused write left the op it collided with untouched
+    let ops = storage.load_ops(vec![(actor, 0)]).await.unwrap();
+    assert_eq!(ops[0].2.as_ref(), b"op");
+}
+
 #[tokio::test]
 async fn op_load_reports_unreadable_and_unparsable_files() {
     let tmp = tempfile::tempdir().unwrap();

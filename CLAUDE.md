@@ -63,7 +63,10 @@ This is a Cargo workspace (resolver "3", edition 2024) with these crates:
   Tokio, using two directories: a `local_path` (device-local meta) and a `remote_path` (the
   syncthing-shared tree, subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`). Locks
   `local_path` for exclusive use by this process (via `fs4`/`flock`, lazily on first local-meta access)
-  so the same actor's local storage can't be opened by two processes at once.
+  so the same actor's local storage can't be opened by two processes at once. Every write goes through
+  a fsynced `.crdt-enc-tmp-*` file in the destination directory, then a rename (local meta) or a hard
+  link (everything immutable, so an existing file is never replaced), so a crash never leaves a
+  truncated file under a real name.
 - [examples/test/](examples/test/) — a minimal binary wiring the tokio storage + an
   `EnvelopeProtector<PasswordKeySlot>` together against a CRDT `MVReg<u64, Uuid>` state, useful as the
   reference for how the pieces fit together end to end.

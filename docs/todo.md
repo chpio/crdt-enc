@@ -2,12 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* crdt-enc-tokio: writes are not crash-safe. `write_file_inner` writes straight to the final
-  name, so a crash mid-write leaves a truncated file that then gets synced to every device: a
-  truncated op makes `store_ops` fail with `AlreadyExists` at that version forever (this device can
-  never write ops again), a truncated content-addressed file makes the next identical write
-  silently "succeed". Fix: write to a temp file, fsync, then hard-link/rename into place (+ fsync
-  the directory).
 * filter filenames in storage-tokio -- concretely: Syncthing downloads into `.syncthing.<name>.tmp`
   (`~syncthing~<name>.tmp` on Windows) in the same directory, so `list_state_names`/
   `list_remote_meta_names` pick up half-downloaded files and `read_remote` fails for as long as a

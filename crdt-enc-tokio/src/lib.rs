@@ -392,39 +392,87 @@ impl crdt_enc::storage::Storage for Storage {
     }
 }
 
-/// Writes `buf` to `path`, creating or truncating it if it already exists.
+/// Name prefix of the temporary files [`write_temp_file`] writes next to their final destination.
+/// Hidden (leading dot) and distinct from anything this crate stores under its real name.
+const TEMP_FILE_PREFIX: &str = ".crdt-enc-tmp-";
+
+/// Writes `buf` to `path`, atomically replacing whatever was there before: a crash leaves either
+/// the old content or the new one, never a truncated file.
 async fn write_file(path: &Path, buf: impl Buf) -> io::Result<()> {
-    write_file_inner(path, buf, false).await
+    let tmp_path = write_temp_file(path, buf).await?;
+    if let Err(err) = fs::rename(&tmp_path, path).await {
+        let _ = fs::remove_file(&tmp_path).await;
+        return Err(err);
+    }
+    sync_parent_dir(path).await
 }
 
-/// Writes `buf` to `path`, failing if `path` already exists (for content that must never be
-/// silently overwritten, e.g. ops).
+/// Writes `buf` to `path`, failing with [`io::ErrorKind::AlreadyExists`] if `path` already exists
+/// (for content that must never be silently overwritten, e.g. ops). Like [`write_file`], `path`
+/// only ever appears complete: the content is moved into place with a hard link, which -- unlike a
+/// rename -- refuses to replace an existing file.
 async fn write_new_file(path: &Path, buf: impl Buf) -> io::Result<()> {
-    write_file_inner(path, buf, true).await
+    let tmp_path = write_temp_file(path, buf).await?;
+    let linked = fs::hard_link(&tmp_path, path).await;
+    let removed = fs::remove_file(&tmp_path).await;
+    linked?;
+    removed?;
+    sync_parent_dir(path).await
 }
 
-/// Shared implementation behind [`write_file`]/[`write_new_file`]: opens `path` (in create-new or
-/// create-or-truncate mode per `create_new`), writes `buf`, then flushes and fsyncs before
-/// returning.
-async fn write_file_inner(path: &Path, mut buf: impl Buf, create_new: bool) -> io::Result<()> {
-    let mut open_options = fs::OpenOptions::new();
-    if create_new {
-        open_options.create_new(true);
-    } else {
-        open_options.create(true).truncate(true);
-    }
-    let mut file = open_options.write(true).open(path).await?;
+/// Writes `buf` to a fresh temporary file in `path`'s directory (so moving it into place never
+/// crosses a filesystem), flushes and fsyncs it, and returns its path. Removes the temporary file
+/// again if any of that fails.
+async fn write_temp_file(path: &Path, mut buf: impl Buf) -> io::Result<PathBuf> {
+    let dir = path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} has no parent directory", path.display()),
+        )
+    })?;
+    let tmp_path = dir.join(format!("{TEMP_FILE_PREFIX}{}", Uuid::new_v4()));
 
-    while buf.has_remaining() {
-        file.write_buf(&mut buf).await?;
-    }
+    let written = async {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)
+            .await?;
 
-    // flush internal buffers
-    file.flush().await?;
-    // fsync
-    file.sync_all().await?;
-    // TODO: close explicitly to catch closing errors
-    // TODO: 1. write to tmp file 2. rename tmp file to real file
+        while buf.has_remaining() {
+            file.write_buf(&mut buf).await?;
+        }
+
+        // flush internal buffers
+        file.flush().await?;
+        // fsync
+        file.sync_all().await
+    }
+    .await;
+
+    match written {
+        Ok(()) => Ok(tmp_path),
+        Err(err) => {
+            let _ = fs::remove_file(&tmp_path).await;
+            Err(err)
+        }
+    }
+}
+
+/// Fsyncs `path`'s parent directory, so the directory entry a rename/hard link just created is as
+/// durable as the file content behind it.
+#[cfg(unix)]
+async fn sync_parent_dir(path: &Path) -> io::Result<()> {
+    match path.parent() {
+        Some(dir) => fs::File::open(dir).await?.sync_all().await,
+        None => Ok(()),
+    }
+}
+
+/// Directories can't be opened for an fsync outside Unix; the rename/hard link itself is all there
+/// is.
+#[cfg(not(unix))]
+async fn sync_parent_dir(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
@@ -495,9 +543,9 @@ async fn read_file_optional(path: &Path) -> Result<Option<Vec<u8>>> {
 /// Writes `bytes` as a new immutable file under `dir_path`, named by the base32 encoding of its
 /// SHA3-256 hash, and returns that name. Writing the same content twice is idempotent: the second
 /// call leaves the existing file untouched and returns the same name, since the name already
-/// determines the content. (It does *not* verify that the existing file is complete -- a write
-/// interrupted mid-way leaves a short file either way; see [`write_file_inner`]'s TODO about writing
-/// to a temporary file and renaming it into place.)
+/// determines the content. (It does *not* verify that the existing file is complete -- writes made
+/// by this crate never leave a short one behind, see [`write_new_file`], but a file put there by
+/// anything else isn't checked.)
 async fn write_content_addressible_file(
     dir_path: &Path,
     bytes: &VersionBytesRef<'_>,
