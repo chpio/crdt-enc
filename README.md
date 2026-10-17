@@ -22,3 +22,8 @@ the a full-state and removing all merged state and applied op files.
     coming from other devices that are still using the old key)
   * allows password management / multiple passwords
 * store header as full-state CRDT
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.
