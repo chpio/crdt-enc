@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Thomas Heck <t@b128.net>"]
 edition = "2021"
 
+[lints]
+workspace = true
+
 [dependencies]
 crdt-enc = {path="../../crdt-enc"}
 crdt-enc-tokio = {path="../../crdt-enc-tokio"}

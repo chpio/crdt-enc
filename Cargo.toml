@@ -9,3 +9,7 @@ members = [
     "crdt-enc-tokio",
     "examples/*",
 ]
+
+[workspace.lints.clippy]
+# UUID literals are written in their canonical 8-4-4-4-12 grouping, which this lint rejects.
+unusual_byte_groupings = "allow"
