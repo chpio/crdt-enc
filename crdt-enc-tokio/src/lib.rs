@@ -128,8 +128,9 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(())
     }
 
-    /// Lists file names under `<remote_path>/meta/`, skipping temporary files (see
-    /// [`is_temp_file`]).
+    /// Lists file names under `<remote_path>/meta/`, skipping temporary files: hidden ones (a
+    /// sync tool's in-flight download, this crate's own half-done writes) and Syncthing's
+    /// `~syncthing~` ones on Windows.
     async fn list_remote_meta_names(&self) -> Result<Vec<String>> {
         let meta_dir = self.remote_path.join("meta");
         read_dir_optional_files(meta_dir)
@@ -204,8 +205,9 @@ impl crdt_enc::storage::Storage for Storage {
         stream::iter(futs).buffer_unordered(32).try_collect().await
     }
 
-    /// Lists file names under `<remote_path>/states/`, skipping temporary files (see
-    /// [`is_temp_file`]).
+    /// Lists file names under `<remote_path>/states/`, skipping temporary files: hidden ones (a
+    /// sync tool's in-flight download, this crate's own half-done writes) and Syncthing's
+    /// `~syncthing~` ones on Windows.
     async fn list_state_names(&self) -> Result<Vec<String>> {
         let states_dir = self.remote_path.join("states");
         read_dir_optional_files(states_dir)
