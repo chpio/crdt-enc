@@ -134,8 +134,9 @@ under `./data/local` and `./data/remote` relative to the workspace root — the 
 directory in this repo is its output, safe to inspect or delete.
 
 CI ([.gitea/workflows/ci.yaml](.gitea/workflows/ci.yaml)) runs `cargo fmt --check`,
-`cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` and
-`cargo cov --locked --fail-under-lines 97` on every push to `main` and every PR, so clippy warnings and
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo test --doc --locked` (only the doctests,
+which cargo-llvm-cov skips on stable) and `cargo cov --locked --fail-under-lines 97` (every other test,
+so nothing runs twice) on every push to `main` and every PR, so clippy warnings and
 line coverage below 97 % fail the build; the run's lcov report is uploaded as the `lcov` artifact. Workspace-wide lint settings live under
 `[workspace.lints]` in the root [Cargo.toml](Cargo.toml); every crate opts in via `[lints] workspace = true`.
 
