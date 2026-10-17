@@ -141,7 +141,8 @@ impl crdt_enc::storage::Storage for Storage {
     }
 
     /// Reads the given files under `<remote_path>/meta/`, up to 32 concurrently, skipping any that
-    /// no longer exist.
+    /// no longer exist. Fails if a file's content doesn't hash to its name (see
+    /// [`ensure_content_address`]).
     async fn load_remote_metas(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("meta");
@@ -155,6 +156,7 @@ impl crdt_enc::storage::Storage for Storage {
                 else {
                     return Ok(None);
                 };
+                ensure_content_address(&path, &name, &bytes)?;
                 let rm = VersionBytes::deserialize(&bytes).with_context(|| {
                     format!("failed parsing remote meta file {}", path.display())
                 })?;
@@ -209,7 +211,8 @@ impl crdt_enc::storage::Storage for Storage {
     }
 
     /// Reads the given files under `<remote_path>/states/`, up to 32 concurrently, skipping any
-    /// that no longer exist.
+    /// that no longer exist. Fails if a file's content doesn't hash to its name (see
+    /// [`ensure_content_address`]).
     async fn load_states(&self, names: Vec<String>) -> Result<Vec<(String, VersionBytes)>> {
         let futs = names.into_iter().map(|name| {
             let mut path = self.remote_path.join("states");
@@ -223,6 +226,7 @@ impl crdt_enc::storage::Storage for Storage {
                 else {
                     return Ok(None);
                 };
+                ensure_content_address(&path, &name, &block)?;
                 let block = VersionBytes::deserialize(&block)
                     .with_context(|| format!("failed parsing state file {}", path.display()))?;
                 Ok(Some((name, block)))
@@ -566,27 +570,44 @@ async fn read_file_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     }
 }
 
-/// Writes `bytes` as a new immutable file under `dir_path`, named by the base32 encoding of its
-/// SHA3-256 hash, and returns that name. Writing the same content twice is idempotent: the second
-/// call leaves the existing file untouched and returns the same name, since the name already
-/// determines the content. (It does *not* verify that the existing file is complete -- writes made
-/// by this crate never leave a short one behind, see [`write_new_file`], but a file put there by
-/// anything else isn't checked.)
-async fn write_content_addressible_file(
-    dir_path: &Path,
-    bytes: &VersionBytesRef<'_>,
-) -> Result<String> {
+/// The name a content-addressed blob with the content `buf` is stored under: the unpadded base32
+/// encoding of its SHA3-256 hash.
+fn content_address(mut buf: impl Buf) -> String {
     let mut digest = Sha3::v256();
-    let mut buf = bytes.buf();
     while buf.has_remaining() {
         let chunk = buf.chunk();
         digest.update(chunk);
         let chunk_len = chunk.len();
         buf.advance(chunk_len);
     }
-    let mut digest_output = [0; 32];
+    let mut digest_output = [0; BLOB_HASH_LEN];
     digest.finalize(&mut digest_output);
-    let block_id = data_encoding::BASE32_NOPAD.encode(&digest_output);
+    data_encoding::BASE32_NOPAD.encode(&digest_output)
+}
+
+/// Fails unless `bytes`, just read from `path`, hash to `name` -- the name *is* the content's hash,
+/// so a mismatch means the file was truncated or otherwise corrupted after it was written (this
+/// crate's own writes never leave a partial file behind, see [`write_new_file`]), and must not
+/// reach `Core` as if it were the blob it claims to be.
+fn ensure_content_address(path: &Path, name: &str, bytes: &[u8]) -> Result<()> {
+    ensure!(
+        content_address(bytes) == name,
+        "content of {} does not match its name",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Writes `bytes` as a new immutable file under `dir_path`, named by [`content_address`], and
+/// returns that name. Writing the same content twice is idempotent: the second call leaves the
+/// existing file untouched and returns the same name, since the name already determines the
+/// content. (An existing file isn't re-read here; [`ensure_content_address`] catches a corrupted
+/// one when it's loaded.)
+async fn write_content_addressible_file(
+    dir_path: &Path,
+    bytes: &VersionBytesRef<'_>,
+) -> Result<String> {
+    let block_id = content_address(bytes.buf());
 
     fs::create_dir_all(dir_path)
         .await

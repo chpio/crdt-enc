@@ -28,6 +28,18 @@ fn blob(content: &[u8]) -> VersionBytes {
     VersionBytes::new(VERSION, content.to_vec())
 }
 
+/// The name the backend gives a blob with exactly this file content (unpadded base32 of its
+/// SHA3-256 hash), so a test can plant a file that passes the name check on load.
+fn content_address(bytes: &[u8]) -> String {
+    use ::tiny_keccak::{Hasher, Sha3};
+
+    let mut digest = Sha3::v256();
+    digest.update(bytes);
+    let mut hash = [0; 32];
+    digest.finalize(&mut hash);
+    data_encoding::BASE32_NOPAD.encode(&hash)
+}
+
 // ---------------------------------------------------------------------------------------------
 // construction and the local lock
 // ---------------------------------------------------------------------------------------------
@@ -162,7 +174,8 @@ async fn remote_meta_round_trips_through_a_content_addressed_name() {
 
 /// A name that has vanished since it was listed -- another device's compaction deleted it in
 /// between -- is skipped rather than reported: its content lives on in whatever superseded it. A
-/// file that is there but can't be read or parsed is still a real error.
+/// file that is there but can't be read, doesn't hash to its name, or can't be parsed is still a
+/// real error.
 #[tokio::test]
 async fn remote_meta_load_skips_vanished_but_reports_broken_files() {
     let tmp = tempfile::tempdir().unwrap();
@@ -186,13 +199,23 @@ async fn remote_meta_load_skips_vanished_but_reports_broken_files() {
         .unwrap_err();
     assert!(err.to_string().contains("failed reading"), "got: {}", err);
 
-    fs::write(remote.join("meta").join("truncated"), b"short")
+    // a blob truncated after it was written no longer hashes to its name
+    let path = remote.join("meta").join(&name);
+    let bytes = fs::read(&path).await.unwrap();
+    fs::write(&path, &bytes[..bytes.len() - 1]).await.unwrap();
+    let err = storage.load_remote_metas(vec![name]).await.unwrap_err();
+    assert!(
+        err.to_string().contains("does not match its name"),
+        "got: {}",
+        err
+    );
+
+    // a file that does hash to its name, but is too short to even hold a version tag
+    let short = content_address(b"short");
+    fs::write(remote.join("meta").join(&short), b"short")
         .await
         .unwrap();
-    let err = storage
-        .load_remote_metas(vec!["truncated".to_string()])
-        .await
-        .unwrap_err();
+    let err = storage.load_remote_metas(vec![short]).await.unwrap_err();
     assert!(err.to_string().contains("failed parsing"), "got: {}", err);
 }
 
@@ -311,7 +334,8 @@ async fn states_round_trip_and_can_be_removed() {
 
 /// A name that has vanished since it was listed -- another device's compaction deleted it in
 /// between -- is skipped rather than reported: its content lives on in whatever superseded it. A
-/// file that is there but can't be read or parsed is still a real error.
+/// file that is there but can't be read, doesn't hash to its name, or can't be parsed is still a
+/// real error.
 #[tokio::test]
 async fn state_load_skips_vanished_but_reports_broken_files() {
     let tmp = tempfile::tempdir().unwrap();
@@ -335,13 +359,23 @@ async fn state_load_skips_vanished_but_reports_broken_files() {
         .unwrap_err();
     assert!(err.to_string().contains("failed reading"), "got: {}", err);
 
-    fs::write(remote.join("states").join("truncated"), b"short")
+    // a blob truncated after it was written no longer hashes to its name
+    let path = remote.join("states").join(&name);
+    let bytes = fs::read(&path).await.unwrap();
+    fs::write(&path, &bytes[..bytes.len() - 1]).await.unwrap();
+    let err = storage.load_states(vec![name]).await.unwrap_err();
+    assert!(
+        err.to_string().contains("does not match its name"),
+        "got: {}",
+        err
+    );
+
+    // a file that does hash to its name, but is too short to even hold a version tag
+    let short = content_address(b"short");
+    fs::write(remote.join("states").join(&short), b"short")
         .await
         .unwrap();
-    let err = storage
-        .load_states(vec!["truncated".to_string()])
-        .await
-        .unwrap_err();
+    let err = storage.load_states(vec![short]).await.unwrap_err();
     assert!(err.to_string().contains("failed parsing"), "got: {}", err);
 }
 
