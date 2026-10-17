@@ -133,11 +133,28 @@ The example binary ([examples/test/src/main.rs](examples/test/src/main.rs)) read
 under `./data/local` and `./data/remote` relative to the workspace root — the untracked `data/`
 directory in this repo is its output, safe to inspect or delete.
 
-CI ([.gitea/workflows/ci.yaml](.gitea/workflows/ci.yaml)) runs `cargo fmt --check`,
-`cargo clippy --all-targets --locked -- -D warnings`, `cargo test --doc --locked` (only the doctests,
-which cargo-llvm-cov skips on stable) and `cargo cov --locked --fail-under-lines 97` (every other test,
-so nothing runs twice) on every push to `main` and every PR, so clippy warnings and
-line coverage below 97 % fail the build; the run's lcov report is uploaded as the `lcov` artifact. Workspace-wide lint settings live under
+CI ([.gitea/workflows/ci.yaml](.gitea/workflows/ci.yaml)) runs on every push to `main` and every PR,
+in the `rust` image built in the separate `git/images` repo (toolchain, MSRV toolchain and all the
+tools below are in the image), as two parallel jobs:
+
+- `check` (fast, no compiling): `cargo fmt --check`, `cargo deny --locked check` (advisories,
+  licenses, bans, sources; config in [deny.toml](deny.toml), duplicate versions only warn),
+  `cargo machete` (unused dependencies; `serde_bytes` is ignored via
+  `[package.metadata.cargo-machete]`, it's only used through `#[serde(with = "serde_bytes")]`),
+  `typos`, `actionlint` and `zizmor` on the workflows. Every step runs even if one before failed.
+- `test`: `cargo clippy --all-targets --locked -- -D warnings`, `cargo doc` with
+  `RUSTDOCFLAGS=-D warnings`, `cargo +<rust-version> check --workspace --locked` (the MSRV, read from
+  `rust-version` in the root [Cargo.toml](Cargo.toml)), `cargo test --doc --locked` (only the
+  doctests, which cargo-llvm-cov skips on stable) and `cargo cov --locked --fail-under-lines 97`
+  (every other test, so nothing runs twice), so line coverage below 97 % fails the build; the run's
+  lcov report is uploaded as the `lcov` artifact.
+
+[.gitea/workflows/advisories.yaml](.gitea/workflows/advisories.yaml) runs
+`cargo deny --locked check advisories` daily, so a new advisory shows up without a push. Actions are
+pinned by commit hash (Renovate updates hash and version comment together), checkouts don't persist
+the token (`persist-credentials: false`), and the workflows only get `contents: read`.
+
+Workspace-wide lint settings live under
 `[workspace.lints]` in the root [Cargo.toml](Cargo.toml); every crate opts in via `[lints] workspace = true`.
 
 ## Notes on current state
