@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Thomas Heck <t@b128.net>"]
 edition = "2024"
 license.workspace = true
+rust-version.workspace = true
 
 [lints]
 workspace = true

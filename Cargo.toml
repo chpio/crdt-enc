@@ -12,6 +12,7 @@ members = [
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
+rust-version = "1.96"
 
 [workspace.lints.clippy]
 # UUID literals are written in their canonical 8-4-4-4-12 grouping, which this lint rejects.
