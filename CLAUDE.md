@@ -54,7 +54,8 @@ This is a Cargo workspace (resolver "3", edition 2024) with these crates:
     heap), plus a re-export of `crdt_enc::utils::SecretBytes`, which this crate's own API names.
 - [crdt-enc-password/](crdt-enc-password/) — a `KeySlotProtector` protecting the content key with a
   password: an Argon2id-derived key encrypts it with XChaCha20-Poly1305. Every wrapped blob carries its
-  own salt and Argon2 parameters, so it's independently unwrappable without any pre-agreed salt between
+  own salt and Argon2 parameters (capped, since they're read from synced data before anything is
+  authenticated), so it's independently unwrappable without any pre-agreed salt between
   devices — though instances converge on the lexicographically smallest salt they've seen under their
   own Argon2 parameters, so a shared one wins over time. Derived keys are cached per salt and
   parameters, since Argon2 is deliberately slow.

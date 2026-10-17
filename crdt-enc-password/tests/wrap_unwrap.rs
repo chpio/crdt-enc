@@ -238,6 +238,67 @@ async fn invalid_argon2_parameters_are_reported() {
         .unwrap_err();
 }
 
+/// An envelope's Argon2 parameters come from synced data and are read before anything is
+/// authenticated, so they must be capped -- otherwise a planted envelope with an enormous memory
+/// cost makes every device hang or run out of memory on open. Each case sits just one step above
+/// its limit, and the error has to name the limit: a merely failed decryption would also come
+/// back as an error, after paying for the derivation.
+#[tokio::test]
+async fn argon2_parameters_above_the_limits_are_refused() {
+    // a mirror of the private `Envelope`, to rewrite the parameters of a genuine one
+    #[derive(::serde::Serialize, ::serde::Deserialize)]
+    struct Envelope {
+        #[serde(with = "serde_bytes")]
+        salt: Vec<u8>,
+        m_cost: u32,
+        t_cost: u32,
+        p_cost: u32,
+        #[serde(with = "serde_bytes")]
+        nonce: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        ciphertext: Vec<u8>,
+    }
+
+    let key_slot = fast_key_slot("a password");
+    let wrapped = key_slot
+        .wrap_key(SecretBytes::new(b"secret key bytes".to_vec()))
+        .await
+        .unwrap();
+    let version_box = ::crdt_enc::utils::VersionBytesRef::deserialize(&wrapped).unwrap();
+
+    let oversized: [fn(&mut Envelope); 3] = [
+        |envelope| envelope.m_cost = 1024 * 1024 + 1,
+        |envelope| envelope.t_cost = 11,
+        |envelope| envelope.p_cost = 17,
+    ];
+    for oversize in oversized {
+        let mut envelope: Envelope = rmp_serde::from_slice(version_box.as_ref()).unwrap();
+        oversize(&mut envelope);
+        let tampered = ::crdt_enc::utils::VersionBytes::new(
+            version_box.version(),
+            rmp_serde::to_vec_named(&envelope).unwrap(),
+        )
+        .serialize();
+
+        // a fresh instance, so nothing is served from the cache
+        let err = fast_key_slot("a password")
+            .unwrap_key(tampered)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("exceed the supported maximum"),
+            "{err}"
+        );
+    }
+
+    // configuring an instance above the limits fails at wrap time rather than producing envelopes
+    // no instance would unwrap
+    PasswordKeySlot::with_params(AtRest::encrypt("a password"), 8, 11, 1)
+        .wrap_key(SecretBytes::new(b"secret key bytes".to_vec()))
+        .await
+        .unwrap_err();
+}
+
 /// Anything that isn't one of this crate's envelopes has to be refused rather than parsed
 /// half-way. All three shapes are what a device would actually meet in the wild: a truncated file,
 /// a blob written by a future envelope format, and a corrupted body.

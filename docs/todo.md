@@ -2,10 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* crdt-enc-password: Argon2 params (`m_cost`/`t_cost`/`p_cost`) are taken from the envelope
-  unchecked, before anything is authenticated -- anyone who can write to the sync folder can plant
-  a meta file with `m_cost = u32::MAX` KiB (~4 TiB) and hang/OOM every device on `open`. Clamp to
-  sane upper bounds in `unwrap_key`.
 * crdt-enc-tokio: writes are not crash-safe. `write_file_inner` writes straight to the final
   name, so a crash mid-write leaves a truncated file that then gets synced to every device: a
   truncated op makes `store_ops` fail with `AlreadyExists` at that version forever (this device can

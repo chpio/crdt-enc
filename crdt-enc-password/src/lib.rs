@@ -3,7 +3,7 @@
 //! for details.
 #![warn(missing_docs)]
 
-use ::anyhow::{Context, Error, Result};
+use ::anyhow::{Context, Error, Result, ensure};
 use ::argon2::{Algorithm, Argon2, Params, Version};
 use ::chacha20poly1305::{Key as AeadKey, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use ::crdt_enc::utils::{LockBox, VersionBytesRef};
@@ -27,6 +27,16 @@ const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 /// The byte length of an Argon2-derived key-encryption key (XChaCha20Poly1305's key size).
 const KEK_LEN: usize = 32;
+
+/// Upper bounds on the Argon2id parameters [`derive_kek`] accepts (memory cost 1 GiB, 10
+/// iterations, parallelism 16 -- the same limits Bitwarden enforces). An envelope's parameters come
+/// from synced data and are read before anything is authenticated, so without a cap anyone able to
+/// write to the sync folder could make every device hang or run out of memory on open.
+const MAX_M_COST: u32 = 1024 * 1024;
+/// See [`MAX_M_COST`].
+const MAX_T_COST: u32 = 10;
+/// See [`MAX_M_COST`].
+const MAX_P_COST: u32 = 16;
 
 /// An Argon2-derived key-encryption key, encrypted at rest -- it directly protects the actual
 /// content-encryption key, so it's just as sensitive as the password it's derived from.
@@ -82,8 +92,10 @@ impl PasswordKeySlot {
 
     /// Creates a [`PasswordKeySlot`] with explicit Argon2id parameters (memory cost in KiB, time
     /// cost, parallelism). The chosen parameters are stored alongside each wrapped key, so
-    /// changing them later doesn't break unwrapping keys wrapped with the old parameters. See
-    /// [`Self::new`] on why `password` is an already-encrypted [`AtRest`].
+    /// changing them later doesn't break unwrapping keys wrapped with the old parameters. At most
+    /// 1 GiB memory cost, 10 iterations and parallelism 16 are accepted -- larger values make
+    /// [`Self::wrap_key`] fail, since no instance would unwrap the result. See [`Self::new`] on why
+    /// `password` is an already-encrypted [`AtRest`].
     pub fn with_params(password: AtRest, m_cost: u32, t_cost: u32, p_cost: u32) -> PasswordKeySlot {
         PasswordKeySlot {
             password,
@@ -244,8 +256,13 @@ impl KeySlotProtector for PasswordKeySlot {
 
 /// Derives a [`KEK_LEN`]-byte key-encryption key from `password` and `salt` via Argon2id. Decrypts
 /// `password` itself, right before actually hashing it, rather than requiring callers to have
-/// already exposed it.
+/// already exposed it. Refuses parameters above [`MAX_M_COST`]/[`MAX_T_COST`]/[`MAX_P_COST`].
 fn derive_kek(password: &AtRest, salt: &[u8], params: KdfParams) -> Result<Kek> {
+    ensure!(
+        params.m_cost <= MAX_M_COST && params.t_cost <= MAX_T_COST && params.p_cost <= MAX_P_COST,
+        "argon2 params {params:?} exceed the supported maximum \
+         (m_cost {MAX_M_COST}, t_cost {MAX_T_COST}, p_cost {MAX_P_COST})"
+    );
     let params = Params::new(params.m_cost, params.t_cost, params.p_cost, Some(KEK_LEN))
         .map_err(|err| Error::msg(format!("invalid argon2 params: {err}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
