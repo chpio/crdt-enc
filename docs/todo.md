@@ -2,10 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* filter filenames in storage-tokio -- concretely: Syncthing downloads into `.syncthing.<name>.tmp`
-  (`~syncthing~<name>.tmp` on Windows) in the same directory, so `list_state_names`/
-  `list_remote_meta_names` pick up half-downloaded files and `read_remote` fails for as long as a
-  download is in flight. Same filter needed for our own temp files once writes go through one.
 * ensure concurrently deleted files (between storage::list and storage::load) do not crash core
 * `Core::open` should `ensure!` that `current_data_version` is in `supported_data_versions` --
   otherwise `Core` writes data it can't read back itself. Also `OpenOptions` docs ask for a sorted

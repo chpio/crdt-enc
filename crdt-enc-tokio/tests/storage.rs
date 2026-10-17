@@ -198,6 +198,36 @@ async fn listing_remote_meta_skips_anything_that_is_not_a_file() {
     assert_eq!(storage.list_remote_meta_names().await.unwrap(), vec![name]);
 }
 
+/// A sync tool downloads into a temporary file right next to the blob it is fetching, and this
+/// crate's own writes do the same. Listing such a file would hand `Core` a half-written blob it
+/// can't decrypt, failing every `read_remote` for as long as the download runs -- so `meta/` and
+/// `states/` listings leave them out.
+#[tokio::test]
+async fn listings_skip_temporary_files() {
+    const TEMP_NAMES: [&str; 3] = [
+        ".syncthing.ABCDEF.tmp",
+        "~syncthing~ABCDEF.tmp",
+        ".crdt-enc-tmp-0d5a8e17-2c94-4b3f-a6e1-58fb7429c0d6",
+    ];
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (storage, remote) = open(tmp.path());
+
+    let meta = storage.store_remote_meta(blob(b"meta")).await.unwrap();
+    let state = storage.store_state(blob(b"state")).await.unwrap();
+    for name in TEMP_NAMES {
+        fs::write(remote.join("meta").join(name), b"partial")
+            .await
+            .unwrap();
+        fs::write(remote.join("states").join(name), b"partial")
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(storage.list_remote_meta_names().await.unwrap(), vec![meta]);
+    assert_eq!(storage.list_state_names().await.unwrap(), vec![state]);
+}
+
 /// A `meta` that is a file rather than a directory isn't "no entries" -- something is badly wrong
 /// with the tree, and quietly reporting it as empty would let `Core` conclude that no device has
 /// ever published anything.

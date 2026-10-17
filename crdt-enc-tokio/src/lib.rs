@@ -7,10 +7,11 @@ use ::bytes::Buf;
 use ::crdt_enc::utils::{LockBox, VersionBytes, VersionBytesRef};
 use ::fs4::tokio::AsyncFileExt;
 use ::futures::{
-    future::{Either, TryFutureExt},
+    future::{self, Either, TryFutureExt},
     stream::{self, Stream, StreamExt, TryStreamExt},
 };
 use ::std::{
+    ffi::OsStr,
     fmt::Debug,
     path::{Path, PathBuf},
     str::FromStr,
@@ -127,11 +128,13 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(())
     }
 
-    /// Lists file names under `<remote_path>/meta/`.
+    /// Lists file names under `<remote_path>/meta/`, skipping temporary files (see
+    /// [`is_temp_file`]).
     async fn list_remote_meta_names(&self) -> Result<Vec<String>> {
         let meta_dir = self.remote_path.join("meta");
         read_dir_optional_files(meta_dir)
             .map_err(|err| err.context("failed listing remote meta entries"))
+            .try_filter(|entry| future::ready(!is_temp_file(&entry.file_name())))
             .and_then(|entry| async move {
                 let name = entry.file_name().into_string().ok().with_context(|| {
                     format!(
@@ -193,11 +196,13 @@ impl crdt_enc::storage::Storage for Storage {
         stream::iter(futs).buffer_unordered(32).try_collect().await
     }
 
-    /// Lists file names under `<remote_path>/states/`.
+    /// Lists file names under `<remote_path>/states/`, skipping temporary files (see
+    /// [`is_temp_file`]).
     async fn list_state_names(&self) -> Result<Vec<String>> {
         let states_dir = self.remote_path.join("states");
         read_dir_optional_files(states_dir)
             .map_err(|err| err.context("failed listing states"))
+            .try_filter(|entry| future::ready(!is_temp_file(&entry.file_name())))
             .and_then(|entry| async move {
                 let name = entry.file_name().into_string().ok().with_context(|| {
                     format!(
@@ -395,6 +400,16 @@ impl crdt_enc::storage::Storage for Storage {
 /// Name prefix of the temporary files [`write_temp_file`] writes next to their final destination.
 /// Hidden (leading dot) and distinct from anything this crate stores under its real name.
 const TEMP_FILE_PREFIX: &str = ".crdt-enc-tmp-";
+
+/// Whether a directory entry is a temporary file rather than a finished blob, and must be left
+/// alone: a sync tool's in-flight download (Syncthing writes `.syncthing.<name>.tmp`, or
+/// `~syncthing~<name>.tmp` on Windows, right next to the file it is fetching), one of this crate's
+/// own [`TEMP_FILE_PREFIX`] files, or any other hidden file. Blob names never start with either.
+/// Checked on the raw bytes, so it applies before a name has to be valid UTF-8.
+fn is_temp_file(name: &OsStr) -> bool {
+    let name = name.as_encoded_bytes();
+    name.starts_with(b".") || name.starts_with(b"~syncthing~")
+}
 
 /// Writes `buf` to `path`, atomically replacing whatever was there before: a crash leaves either
 /// the old content or the new one, never a truncated file.
