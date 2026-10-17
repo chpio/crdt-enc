@@ -59,6 +59,5 @@ Each list is ordered by priority, most important first.
   envelope tags each ciphertext with its key id.
 * `decode_version_bytes_mvreg_custom` and `decode_version_bytes_mvreg_custom_phf` are near-identical;
   unify via a small trait over the supported-versions set (`&[Uuid]` / `&phf::Set<u128>`).
-* typo `actor_last_verions` in `Storage::remove_ops`.
 * `examples/test` is still on edition 2021, everything else on 2024.
 * change crate names

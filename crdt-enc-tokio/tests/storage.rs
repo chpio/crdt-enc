@@ -850,7 +850,7 @@ async fn storing_reports_a_write_failure_that_is_not_a_repeat() {
 
     let err = result.unwrap_err();
     assert!(
-        format!("{:#}", err).contains("content addressible"),
+        format!("{:#}", err).contains("content addressable"),
         "got: {:#}",
         err
     );

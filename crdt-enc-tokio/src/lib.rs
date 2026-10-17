@@ -175,7 +175,7 @@ impl crdt_enc::storage::Storage for Storage {
     /// content, and returns that name.
     async fn store_remote_meta(&self, meta: VersionBytes) -> Result<String> {
         let meta_dir = self.remote_path.join("meta");
-        write_content_addressible_file(&meta_dir, &meta.as_version_bytes_ref())
+        write_content_addressable_file(&meta_dir, &meta.as_version_bytes_ref())
             .await
             .context("failed writing remote meta file")
     }
@@ -244,7 +244,7 @@ impl crdt_enc::storage::Storage for Storage {
     /// content, and returns that name.
     async fn store_state(&self, bytes: VersionBytes) -> Result<String> {
         let states_dir = self.remote_path.join("states");
-        write_content_addressible_file(&states_dir, &bytes.as_version_bytes_ref())
+        write_content_addressable_file(&states_dir, &bytes.as_version_bytes_ref())
             .await
             .context("failed writing state file")
     }
@@ -400,7 +400,7 @@ const TEMP_FILE_PREFIX: &str = ".crdt-enc-tmp-";
 /// The byte length of the SHA3-256 hash a content-addressed blob is named after.
 const BLOB_HASH_LEN: usize = 32;
 
-/// `name` as a string if it has the exact shape [`write_content_addressible_file`] names blobs --
+/// `name` as a string if it has the exact shape [`write_content_addressable_file`] names blobs --
 /// the unpadded base32 encoding of a [`BLOB_HASH_LEN`]-byte hash -- and `None` for anything else:
 /// a sync tool's in-flight download (Syncthing writes `.syncthing.<name>.tmp` right next to the
 /// file it is fetching) or conflict copy, one of this crate's own [`TEMP_FILE_PREFIX`] files, or
@@ -593,7 +593,7 @@ fn ensure_content_address(path: &Path, name: &str, bytes: &[u8]) -> Result<()> {
 /// existing file untouched and returns the same name, since the name already determines the
 /// content. (An existing file isn't re-read here; [`ensure_content_address`] catches a corrupted
 /// one when it's loaded.)
-async fn write_content_addressible_file(
+async fn write_content_addressable_file(
     dir_path: &Path,
     bytes: &VersionBytesRef<'_>,
 ) -> Result<String> {
@@ -611,7 +611,7 @@ async fn write_content_addressible_file(
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
         result => result.with_context(|| {
             format!(
-                "failed writing content addressible file {}",
+                "failed writing content addressable file {}",
                 file_path.display()
             )
         })?,

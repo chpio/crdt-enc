@@ -106,6 +106,6 @@ where
     /// `last_version`, e.g. ones superseded by a newer compaction.
     fn remove_ops(
         &self,
-        actor_last_verions: Vec<(Uuid, u64)>,
+        actor_last_versions: Vec<(Uuid, u64)>,
     ) -> impl Future<Output = Result<()>> + Send;
 }
