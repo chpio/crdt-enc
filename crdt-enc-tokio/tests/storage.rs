@@ -211,16 +211,19 @@ async fn listing_remote_meta_skips_anything_that_is_not_a_file() {
     assert_eq!(storage.list_remote_meta_names().await.unwrap(), vec![name]);
 }
 
-/// A sync tool downloads into a temporary file right next to the blob it is fetching, and this
-/// crate's own writes do the same. Listing such a file would hand `Core` a half-written blob it
-/// can't decrypt, failing every `read_remote` for as long as the download runs -- so `meta/` and
-/// `states/` listings leave them out.
+/// `meta/` and `states/` only ever hold blobs named by their content hash, so a listing returns
+/// exactly those names and nothing else. Everything else that ends up there -- a sync tool's
+/// in-flight download right next to the blob it is fetching, its conflict copies, this crate's own
+/// half-done writes, OS clutter -- would otherwise reach `Core` as a blob it can't decrypt, failing
+/// every `read_remote` while it sits there.
 #[tokio::test]
-async fn listings_skip_temporary_files() {
-    const TEMP_NAMES: [&str; 3] = [
+async fn listings_skip_anything_that_is_not_a_blob_name() {
+    const FOREIGN_NAMES: [&str; 5] = [
         ".syncthing.ABCDEF.tmp",
         "~syncthing~ABCDEF.tmp",
         ".crdt-enc-tmp-0d5a8e17-2c94-4b3f-a6e1-58fb7429c0d6",
+        ".DS_Store",
+        "Thumbs.db",
     ];
 
     let tmp = tempfile::tempdir().unwrap();
@@ -228,13 +231,22 @@ async fn listings_skip_temporary_files() {
 
     let meta = storage.store_remote_meta(blob(b"meta")).await.unwrap();
     let state = storage.store_state(blob(b"state")).await.unwrap();
-    for name in TEMP_NAMES {
-        fs::write(remote.join("meta").join(name), b"partial")
-            .await
-            .unwrap();
-        fs::write(remote.join("states").join(name), b"partial")
-            .await
-            .unwrap();
+    for (dir, real) in [("meta", &meta), ("states", &state)] {
+        // near misses of a real name: a conflict copy, the wrong case, one character short
+        let near_misses = [
+            format!("{real}.sync-conflict-20261017-120000-ABCDEFG"),
+            real.to_lowercase(),
+            real[1..].to_string(),
+        ];
+        for name in FOREIGN_NAMES
+            .iter()
+            .copied()
+            .chain(near_misses.iter().map(String::as_str))
+        {
+            fs::write(remote.join(dir).join(name), b"partial")
+                .await
+                .unwrap();
+        }
     }
 
     assert_eq!(storage.list_remote_meta_names().await.unwrap(), vec![meta]);
@@ -564,35 +576,43 @@ async fn removing_ops_reports_a_failure_that_is_not_just_a_missing_file() {
     assert!(err.to_string().contains("failed removing"), "got: {}", err);
 }
 
-/// `ops/` holds one directory per actor, named by that actor's uuid. Anything else in there is
-/// either not ours or corrupt: a plain file is skipped, but a directory whose name isn't a uuid is
-/// reported, since silently ignoring it would drop that actor's entire op log.
+/// `ops/` holds one directory per actor, named by that actor's uuid in its canonical hyphenated
+/// form, and nothing else is listed: not a plain file, not a directory whose name isn't a uuid,
+/// not even another spelling of one. `load_ops` only ever looks under the canonical name, so none
+/// of those could hold an op log this crate is able to read -- skipping them loses nothing.
 #[tokio::test]
-async fn listing_op_actors_skips_files_but_reports_a_non_uuid_directory() {
+async fn listing_op_actors_skips_anything_that_is_not_an_actor_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let (storage, remote) = open(tmp.path());
     let actor = Uuid::new_v4();
+    let other = Uuid::new_v4();
 
     storage.store_ops(actor, 0, blob(b"op")).await.unwrap();
 
     fs::write(remote.join("ops").join("a-file"), b"stray")
         .await
         .unwrap();
-    assert_eq!(storage.list_op_actors().await.unwrap(), vec![actor]);
+    for dir in [
+        "not-a-uuid".to_string(),
+        other.simple().to_string(),
+        other.braced().to_string(),
+        other.hyphenated().to_string().to_uppercase(),
+    ] {
+        fs::create_dir_all(remote.join("ops").join(dir))
+            .await
+            .unwrap();
+    }
 
-    fs::create_dir_all(remote.join("ops").join("not-a-uuid"))
-        .await
-        .unwrap();
-    let err = storage.list_op_actors().await.unwrap_err();
-    assert!(err.to_string().contains("into uuid"), "got: {}", err);
+    assert_eq!(storage.list_op_actors().await.unwrap(), vec![actor]);
 }
 
-/// Filenames on Unix are bytes, not text. A tree that picked up a non-UTF-8 name (from a foreign
-/// filesystem, a partial sync, or plain corruption) must be reported rather than lossily converted
-/// into a name that maps back to no file at all.
+/// Filenames on Unix are bytes, not text. Every name this crate writes is plain ASCII, so a
+/// non-UTF-8 one (from a foreign filesystem, a partial sync, or plain corruption) can't be one of
+/// ours and is skipped like any other foreign name -- rather than lossily converted into a name
+/// that maps back to no file at all.
 #[cfg(unix)]
 #[tokio::test]
-async fn names_that_are_not_utf8_are_reported() -> Result<()> {
+async fn names_that_are_not_utf8_are_skipped() -> Result<()> {
     use ::std::{ffi::OsStr, os::unix::ffi::OsStrExt};
 
     let invalid = OsStr::from_bytes(b"invalid-\xff-utf8");
@@ -601,21 +621,13 @@ async fn names_that_are_not_utf8_are_reported() -> Result<()> {
     let (storage, remote) = open(tmp.path());
     fs::create_dir_all(remote.join("meta")).await?;
     fs::write(remote.join("meta").join(invalid), b"x").await?;
-    let err = storage.list_remote_meta_names().await.unwrap_err();
-    assert!(err.to_string().contains("to string"), "got: {}", err);
-
-    let tmp = tempfile::tempdir()?;
-    let (storage, remote) = open(tmp.path());
     fs::create_dir_all(remote.join("states")).await?;
     fs::write(remote.join("states").join(invalid), b"x").await?;
-    let err = storage.list_state_names().await.unwrap_err();
-    assert!(err.to_string().contains("to string"), "got: {}", err);
-
-    let tmp = tempfile::tempdir()?;
-    let (storage, remote) = open(tmp.path());
     fs::create_dir_all(remote.join("ops").join(invalid)).await?;
-    let err = storage.list_op_actors().await.unwrap_err();
-    assert!(err.to_string().contains("to string"), "got: {}", err);
+
+    assert!(storage.list_remote_meta_names().await?.is_empty());
+    assert!(storage.list_state_names().await?.is_empty());
+    assert!(storage.list_op_actors().await?.is_empty());
 
     Ok(())
 }

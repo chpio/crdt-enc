@@ -66,7 +66,9 @@ This is a Cargo workspace (resolver "3", edition 2024) with these crates:
   so the same actor's local storage can't be opened by two processes at once. Every write goes through
   a fsynced `.crdt-enc-tmp-*` file in the destination directory, then a rename (local meta) or a hard
   link (everything immutable, so an existing file is never replaced), so a crash never leaves a
-  truncated file under a real name.
+  truncated file under a real name. Listings are a whitelist of its own name formats (base32 SHA3-256
+  hashes in `meta/`/`states/`, canonical hyphenated UUIDs in `ops/`), so sync-tool temp files,
+  conflict copies and other foreign entries are skipped rather than reported.
 - [examples/test/](examples/test/) — a minimal binary wiring the tokio storage + an
   `EnvelopeProtector<PasswordKeySlot>` together against a CRDT `MVReg<u64, Uuid>` state, useful as the
   reference for how the pieces fit together end to end.

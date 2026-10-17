@@ -128,23 +128,14 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(())
     }
 
-    /// Lists file names under `<remote_path>/meta/`, skipping temporary files: hidden ones (a
-    /// sync tool's in-flight download, this crate's own half-done writes) and Syncthing's
-    /// `~syncthing~` ones on Windows.
+    /// Lists file names under `<remote_path>/meta/`, skipping anything that isn't a
+    /// content-addressed blob name -- a sync tool's in-flight download or conflict copy, this
+    /// crate's own half-done writes, whatever else ended up there.
     async fn list_remote_meta_names(&self) -> Result<Vec<String>> {
         let meta_dir = self.remote_path.join("meta");
         read_dir_optional_files(meta_dir)
             .map_err(|err| err.context("failed listing remote meta entries"))
-            .try_filter(|entry| future::ready(!is_temp_file(&entry.file_name())))
-            .and_then(|entry| async move {
-                let name = entry.file_name().into_string().ok().with_context(|| {
-                    format!(
-                        "failed converting remote meta entry name to string for {}",
-                        entry.path().display()
-                    )
-                })?;
-                Ok(name)
-            })
+            .try_filter_map(|entry| future::ready(Ok(blob_name(&entry.file_name()))))
             .try_collect()
             .await
     }
@@ -205,23 +196,14 @@ impl crdt_enc::storage::Storage for Storage {
         stream::iter(futs).buffer_unordered(32).try_collect().await
     }
 
-    /// Lists file names under `<remote_path>/states/`, skipping temporary files: hidden ones (a
-    /// sync tool's in-flight download, this crate's own half-done writes) and Syncthing's
-    /// `~syncthing~` ones on Windows.
+    /// Lists file names under `<remote_path>/states/`, skipping anything that isn't a
+    /// content-addressed blob name -- a sync tool's in-flight download or conflict copy, this
+    /// crate's own half-done writes, whatever else ended up there.
     async fn list_state_names(&self) -> Result<Vec<String>> {
         let states_dir = self.remote_path.join("states");
         read_dir_optional_files(states_dir)
             .map_err(|err| err.context("failed listing states"))
-            .try_filter(|entry| future::ready(!is_temp_file(&entry.file_name())))
-            .and_then(|entry| async move {
-                let name = entry.file_name().into_string().ok().with_context(|| {
-                    format!(
-                        "failed converting state name to string for state file {}",
-                        entry.path().display()
-                    )
-                })?;
-                Ok(name)
-            })
+            .try_filter_map(|entry| future::ready(Ok(blob_name(&entry.file_name()))))
             .try_collect()
             .await
     }
@@ -289,21 +271,14 @@ impl crdt_enc::storage::Storage for Storage {
         Ok(names)
     }
 
-    /// Lists the actor-uuid-named subdirectories under `<remote_path>/ops/`.
+    /// Lists the actor-uuid-named subdirectories under `<remote_path>/ops/`, skipping anything
+    /// that isn't named by an actor uuid in the canonical form
+    /// [`store_ops`](crdt_enc::storage::Storage::store_ops) writes.
     async fn list_op_actors(&self) -> Result<Vec<Uuid>> {
         let ops_dir = self.remote_path.join("ops");
         read_dir_optional_dirs(ops_dir)
             .map_err(|err| err.context("failed listing actors"))
-            .and_then(|entry| async move {
-                let actor = entry.file_name();
-                let actor = actor.to_str().with_context(|| {
-                    format!("error converting actor dir name {:?} to string", actor)
-                })?;
-                let actor = Uuid::from_str(actor).with_context(|| {
-                    format!("error converting actor dir string {} into uuid", actor)
-                })?;
-                Ok(actor)
-            })
+            .try_filter_map(|entry| future::ready(Ok(actor_dir_name(&entry.file_name()))))
             .try_collect()
             .await
     }
@@ -419,14 +394,32 @@ impl crdt_enc::storage::Storage for Storage {
 /// Hidden (leading dot) and distinct from anything this crate stores under its real name.
 const TEMP_FILE_PREFIX: &str = ".crdt-enc-tmp-";
 
-/// Whether a directory entry is a temporary file rather than a finished blob, and must be left
-/// alone: a sync tool's in-flight download (Syncthing writes `.syncthing.<name>.tmp`, or
-/// `~syncthing~<name>.tmp` on Windows, right next to the file it is fetching), one of this crate's
-/// own [`TEMP_FILE_PREFIX`] files, or any other hidden file. Blob names never start with either.
-/// Checked on the raw bytes, so it applies before a name has to be valid UTF-8.
-fn is_temp_file(name: &OsStr) -> bool {
-    let name = name.as_encoded_bytes();
-    name.starts_with(b".") || name.starts_with(b"~syncthing~")
+/// The byte length of the SHA3-256 hash a content-addressed blob is named after.
+const BLOB_HASH_LEN: usize = 32;
+
+/// `name` as a string if it has the exact shape [`write_content_addressible_file`] names blobs --
+/// the unpadded base32 encoding of a [`BLOB_HASH_LEN`]-byte hash -- and `None` for anything else:
+/// a sync tool's in-flight download (Syncthing writes `.syncthing.<name>.tmp` right next to the
+/// file it is fetching) or conflict copy, one of this crate's own [`TEMP_FILE_PREFIX`] files, or
+/// whatever else ended up in the directory. A whitelist rather than a list of known junk, so it
+/// doesn't depend on which sync tool is in use.
+fn blob_name(name: &OsStr) -> Option<String> {
+    let name = name.to_str()?;
+    let hash = data_encoding::BASE32_NOPAD.decode(name.as_bytes()).ok()?;
+    (hash.len() == BLOB_HASH_LEN).then(|| name.to_owned())
+}
+
+/// The actor id `name` encodes if it has the exact shape [`Storage::store_ops`] names an actor's op
+/// directory -- a hyphenated, lowercase UUID -- and `None` for anything else, for the same reason
+/// as [`blob_name`]. Other spellings of a valid UUID are refused too: [`Storage::load_ops`] looks
+/// the directory up under the canonical spelling, so it would never find the ops in there.
+///
+/// [`Storage::store_ops`]: crdt_enc::storage::Storage::store_ops
+/// [`Storage::load_ops`]: crdt_enc::storage::Storage::load_ops
+fn actor_dir_name(name: &OsStr) -> Option<Uuid> {
+    let name = name.to_str()?;
+    let actor = Uuid::from_str(name).ok()?;
+    (actor.hyphenated().to_string() == name).then_some(actor)
 }
 
 /// Writes `buf` to `path`, atomically replacing whatever was there before: a crash leaves either
