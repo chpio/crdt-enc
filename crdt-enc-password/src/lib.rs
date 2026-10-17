@@ -32,13 +32,25 @@ const KEK_LEN: usize = 32;
 /// content-encryption key, so it's just as sensitive as the password it's derived from.
 type Kek = AtRest;
 
+/// One set of Argon2id cost parameters. Part of the `unwrap_cache` key alongside the salt: the same
+/// salt under different parameters derives a different key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct KdfParams {
+    /// Memory cost (KiB).
+    m_cost: u32,
+    /// Time cost (iterations).
+    t_cost: u32,
+    /// Parallelism.
+    p_cost: u32,
+}
+
 /// A [`KeySlotProtector`] that wraps/unwraps a key with a password: an Argon2id-derived key
 /// encrypts it with XChaCha20Poly1305. Every wrapped blob carries its own salt (and the Argon2
 /// parameters used), so it's independently unwrappable — no shared/pre-agreed salt between
-/// devices is needed. Derived keys are cached per salt (Argon2 is deliberately slow, and
-/// [`Self::wrap_key`]/[`Self::unwrap_key`] can otherwise be called repeatedly for the same salt,
-/// e.g. once per [`crdt_enc::Core::read_remote_meta`] call), so it only runs again for a salt this
-/// instance hasn't seen before.
+/// devices is needed. Derived keys are cached per salt and parameters (Argon2 is deliberately slow,
+/// and [`Self::wrap_key`]/[`Self::unwrap_key`] can otherwise be called repeatedly for the same
+/// salt, e.g. once per [`crdt_enc::Core::read_remote_meta`] call), so it only runs again for a
+/// salt/parameter pair this instance hasn't seen before.
 ///
 /// The password is kept resident (encrypted at rest via [`AtRest`], decrypted only for the
 /// brief moment an Argon2 derivation actually needs it) for this value's entire lifetime, not just
@@ -50,16 +62,12 @@ type Kek = AtRest;
 pub struct PasswordKeySlot {
     /// The password, encrypted at rest -- see the struct doc comment.
     password: AtRest,
-    /// Argon2id memory cost (KiB) for keys this instance derives.
-    m_cost: u32,
-    /// Argon2id time cost (iterations) for keys this instance derives.
-    t_cost: u32,
-    /// Argon2id parallelism for keys this instance derives.
-    p_cost: u32,
-    /// Derived keys seen so far, keyed by salt, for [`Self::unwrap_key`] -- and, via
+    /// Argon2id parameters for keys this instance derives.
+    params: KdfParams,
+    /// Derived keys seen so far, keyed by salt and parameters, for [`Self::unwrap_key`] -- and, via
     /// [`Self::own_salt_kek`], also the source [`Self::wrap_key`] uses to converge on a single
     /// shared salt across devices instead of each independently minting its own.
-    unwrap_cache: LockBox<HashMap<[u8; SALT_LEN], Kek>>,
+    unwrap_cache: LockBox<HashMap<([u8; SALT_LEN], KdfParams), Kek>>,
 }
 
 impl PasswordKeySlot {
@@ -79,19 +87,26 @@ impl PasswordKeySlot {
     pub fn with_params(password: AtRest, m_cost: u32, t_cost: u32, p_cost: u32) -> PasswordKeySlot {
         PasswordKeySlot {
             password,
-            m_cost,
-            t_cost,
-            p_cost,
+            params: KdfParams {
+                m_cost,
+                t_cost,
+                p_cost,
+            },
             unwrap_cache: LockBox::new(HashMap::new()),
         }
     }
 
     /// Returns the (salt, derived key) pair [`Self::wrap_key`] should use: the lexicographically
-    /// smallest salt already known via `unwrap_cache` (e.g. from decoding another device's entry
-    /// during the [`crdt_enc::protector::Protector::set_remote_meta`] merge that precedes this
-    /// call, same min-by-id tiebreak philosophy as `Keys::latest_key()`), so devices converge on
-    /// one shared salt instead of each picking their own. Only mints a genuinely fresh salt if none
-    /// is known yet (true first-ever bootstrap).
+    /// smallest salt already known via `unwrap_cache` under this instance's own parameters (e.g.
+    /// from decoding another device's entry during the
+    /// [`crdt_enc::protector::Protector::set_remote_meta`] merge that precedes this call, same
+    /// min-by-id tiebreak philosophy as `Keys::latest_key()`), so devices converge on one shared
+    /// salt instead of each picking their own. Only mints a genuinely fresh salt if none is known
+    /// yet (true first-ever bootstrap).
+    ///
+    /// Salts seen only under other parameters are skipped: their cached key was derived with those
+    /// parameters, while [`Self::wrap_key`] labels its envelope with this instance's own, so
+    /// reusing one would produce an envelope nobody can unwrap without that exact cache entry.
     ///
     /// Recomputed on every call rather than cached: since every derived key is immediately
     /// inserted into `unwrap_cache`, this only costs an Argon2 run the very first time (or if a
@@ -100,30 +115,32 @@ impl PasswordKeySlot {
     /// the cleartext password already has to stay resident for [`Self::unwrap_key`]'s sake
     /// regardless (see the struct doc comment).
     async fn own_salt_kek(&self) -> Result<([u8; SALT_LEN], Kek)> {
+        let params = self.params;
+
         if let Some(pair) = self.unwrap_cache.with(|cache| {
             cache
                 .iter()
-                .min_by(|a, b| a.0.cmp(b.0))
-                .map(|(salt, kek)| (*salt, kek.clone()))
+                .filter(|((_, entry_params), _)| *entry_params == params)
+                .min_by(|a, b| a.0.0.cmp(&b.0.0))
+                .map(|((salt, _), kek)| (*salt, kek.clone()))
         }) {
             return Ok(pair);
         }
 
         let password = self.password.clone();
-        let (m_cost, t_cost, p_cost) = (self.m_cost, self.t_cost, self.p_cost);
 
         let (salt, kek) = spawn_blocking(move || {
             let mut salt = [0u8; SALT_LEN];
             rng()
                 .try_fill_bytes(&mut salt)
                 .context("Unable to get random data for salt")?;
-            let kek = derive_kek(&password, &salt, m_cost, t_cost, p_cost)?;
+            let kek = derive_kek(&password, &salt, params)?;
             Result::<_, Error>::Ok((salt, kek))
         })
         .await??;
 
         self.unwrap_cache
-            .with(|cache| cache.insert(salt, kek.clone()));
+            .with(|cache| cache.insert((salt, params), kek.clone()));
 
         Ok((salt, kek))
     }
@@ -137,7 +154,11 @@ impl KeySlotProtector for PasswordKeySlot {
     async fn wrap_key(&self, key: SecretBytes) -> Result<Vec<u8>> {
         let (salt, kek) = self.own_salt_kek().await?;
 
-        let (m_cost, t_cost, p_cost) = (self.m_cost, self.t_cost, self.p_cost);
+        let KdfParams {
+            m_cost,
+            t_cost,
+            p_cost,
+        } = self.params;
 
         spawn_blocking(move || {
             let mut nonce = [0u8; NONCE_LEN];
@@ -182,23 +203,26 @@ impl KeySlotProtector for PasswordKeySlot {
         let envelope: Envelope = rmp_serde::from_slice(version_box.as_ref())
             .context("failed to parse password envelope")?;
 
+        let salt = envelope.salt;
+        let params = KdfParams {
+            m_cost: envelope.m_cost,
+            t_cost: envelope.t_cost,
+            p_cost: envelope.p_cost,
+        };
+
         let cached_kek = self
             .unwrap_cache
-            .with(|cache| cache.get(&envelope.salt).cloned());
+            .with(|cache| cache.get(&(salt, params)).cloned());
 
         let kek = match cached_kek {
             Some(kek) => kek,
             None => {
                 let password = self.password.clone();
-                let salt = envelope.salt;
-                let (m_cost, t_cost, p_cost) = (envelope.m_cost, envelope.t_cost, envelope.p_cost);
 
-                let kek =
-                    spawn_blocking(move || derive_kek(&password, &salt, m_cost, t_cost, p_cost))
-                        .await??;
+                let kek = spawn_blocking(move || derive_kek(&password, &salt, params)).await??;
 
                 self.unwrap_cache
-                    .with(|cache| cache.insert(envelope.salt, kek.clone()));
+                    .with(|cache| cache.insert((salt, params), kek.clone()));
 
                 kek
             }
@@ -221,14 +245,8 @@ impl KeySlotProtector for PasswordKeySlot {
 /// Derives a [`KEK_LEN`]-byte key-encryption key from `password` and `salt` via Argon2id. Decrypts
 /// `password` itself, right before actually hashing it, rather than requiring callers to have
 /// already exposed it.
-fn derive_kek(
-    password: &AtRest,
-    salt: &[u8],
-    m_cost: u32,
-    t_cost: u32,
-    p_cost: u32,
-) -> Result<Kek> {
-    let params = Params::new(m_cost, t_cost, p_cost, Some(KEK_LEN))
+fn derive_kek(password: &AtRest, salt: &[u8], params: KdfParams) -> Result<Kek> {
+    let params = Params::new(params.m_cost, params.t_cost, params.p_cost, Some(KEK_LEN))
         .map_err(|err| Error::msg(format!("invalid argon2 params: {err}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 

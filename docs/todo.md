@@ -2,14 +2,6 @@ Each list is ordered by priority, most important first.
 
 ## Bugs
 
-* crdt-enc-password: mismatched Argon2 params lock everyone out. `unwrap_cache` is keyed by
-  salt alone, so when `own_salt_kek` adopts another device's salt it reuses that device's KEK --
-  derived with *its* params -- while `wrap_key` writes *this* instance's params into the envelope.
-  Nobody without that cache entry (including this same device after a restart) can unwrap the
-  result ("decryption failed (wrong password or tampered data)", reproduced with a throwaway test).
-  Hits any two devices with different `with_params`, and any later change of the params, which the
-  docs promise is safe. Fix: key the cache by (salt, params), only adopt salts whose params match
-  our own, add a regression test.
 * crdt-enc: race in `Core::store_remote_meta`. It serializes `remote_meta`, `.await`s the
   write, then drains and deletes *every* name in `read_remote_metas` -- including names merged in by
   a concurrent `read_remote_meta_` during that `.await`, whose content is not in the blob just

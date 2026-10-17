@@ -55,8 +55,9 @@ This is a Cargo workspace (resolver "3", edition 2024) with these crates:
 - [crdt-enc-password/](crdt-enc-password/) — a `KeySlotProtector` protecting the content key with a
   password: an Argon2id-derived key encrypts it with XChaCha20-Poly1305. Every wrapped blob carries its
   own salt and Argon2 parameters, so it's independently unwrappable without any pre-agreed salt between
-  devices — though instances converge on the lexicographically smallest salt they've seen so a shared
-  one wins over time. Derived keys are cached per salt, since Argon2 is deliberately slow.
+  devices — though instances converge on the lexicographically smallest salt they've seen under their
+  own Argon2 parameters, so a shared one wins over time. Derived keys are cached per salt and
+  parameters, since Argon2 is deliberately slow.
 - [crdt-enc-tokio/](crdt-enc-tokio/) — a `Storage` implementation backed by the local filesystem via
   Tokio, using two directories: a `local_path` (device-local meta) and a `remote_path` (the
   syncthing-shared tree, subdirectories `meta/`, `states/`, `ops/<actor-uuid>/<version>`). Locks

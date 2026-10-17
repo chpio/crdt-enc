@@ -179,6 +179,35 @@ async fn instance_that_saw_a_wrap_converges_on_its_salt() {
     assert_eq!(salt_a.salt, salt_b.salt);
 }
 
+/// Salt convergence must stay within one set of Argon2 parameters. A device that adopted a salt
+/// seen under *other* parameters used to reuse that device's cached key while labelling its own
+/// envelope with its own parameters -- an envelope nobody could unwrap without that exact cache
+/// entry, not even the same device after a restart.
+#[tokio::test]
+async fn instance_with_other_params_does_not_adopt_a_foreign_salt() {
+    let key = b"secret key bytes";
+
+    let a = PasswordKeySlot::with_params(AtRest::encrypt("shared password"), 8, 1, 1);
+    let wrapped_by_a = a.wrap_key(SecretBytes::new(key.to_vec())).await.unwrap();
+
+    // B runs with different params and sees A's entry before wrapping its own
+    let b = PasswordKeySlot::with_params(AtRest::encrypt("shared password"), 16, 1, 1);
+    b.unwrap_key(wrapped_by_a).await.unwrap();
+    let wrapped_by_b = b.wrap_key(SecretBytes::new(key.to_vec())).await.unwrap();
+
+    // a fresh instance has no cache to fall back on, so this only works if B's envelope is
+    // self-consistent
+    let fresh = fast_key_slot("shared password");
+    assert_eq!(
+        fresh
+            .unwrap_key(wrapped_by_b)
+            .await
+            .unwrap()
+            .expose_secret(),
+        key
+    );
+}
+
 /// `PasswordKeySlot::new` is what applications actually call -- `with_params` only exists so tests
 /// (and anyone with a considered reason) can pick cheaper Argon2 settings. This is the one test
 /// that pays the real OWASP-minimum derivation cost, to make sure the defaults it hard-codes are
