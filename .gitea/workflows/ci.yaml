@@ -5,16 +5,22 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     # built in the git/images repo
     # The image runs rustc through sccache. Its storage (SCCACHE_REDIS_ENDPOINT and
     # SCCACHE_REDIS_PASSWORD) comes from the runner for every job; don't set it here, an empty
-    # value would override it.
-    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest
+    # value would override it. The image is meant to float: it's rebuilt with the current toolchain
+    # and tools every week.
+    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest # zizmor: ignore[unpinned-images]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       # only the doctests here: cargo-llvm-cov skips them on stable, and runs every other test below
@@ -24,7 +30,7 @@ jobs:
       - run: |
           mkdir -p target/llvm-cov
           cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lcov
           path: target/llvm-cov/lcov.info
