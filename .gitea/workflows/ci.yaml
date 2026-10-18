@@ -54,13 +54,5 @@ jobs:
       # only the doctests here: cargo-llvm-cov skips them on stable, and runs every other test below
       - run: cargo test --doc --locked
       - run: cargo cov --locked --fail-under-lines 97
-      # reuses the profile data of the run above instead of running the tests again
-      - run: |
-          mkdir -p target/llvm-cov
-          cargo llvm-cov report --lcov --output-path target/llvm-cov/lcov.info
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: lcov
-          path: target/llvm-cov/lcov.info
       - run: sccache --show-stats
         if: always()

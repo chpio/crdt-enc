@@ -146,8 +146,8 @@ tools below are in the image), as two parallel jobs:
   `RUSTDOCFLAGS=-D warnings`, `cargo +<rust-version> check --workspace --locked` (the MSRV, read from
   `rust-version` in the root [Cargo.toml](Cargo.toml)), `cargo test --doc --locked` (only the
   doctests, which cargo-llvm-cov skips on stable) and `cargo cov --locked --fail-under-lines 97`
-  (every other test, so nothing runs twice), so line coverage below 97 % fails the build; the run's
-  lcov report is uploaded as the `lcov` artifact.
+  (every other test, so nothing runs twice), so line coverage below 97 % fails the build; the
+  per-file coverage table ends up in the job log.
 
 [.gitea/workflows/advisories.yaml](.gitea/workflows/advisories.yaml) runs
 `cargo deny --locked check advisories` daily, so a new advisory shows up without a push. Actions are
