@@ -134,7 +134,7 @@ under `./data/local` and `./data/remote` relative to the workspace root — the 
 directory in this repo is its output, safe to inspect or delete.
 
 CI ([.gitea/workflows/ci.yaml](.gitea/workflows/ci.yaml)) runs on every push to `main` and every PR,
-in the `rust` image built in the separate `git/images` repo (toolchain, MSRV toolchain and all the
+in the `ci-rust` image built in the separate `git/images` repo (toolchain, MSRV toolchain and all the
 tools below are in the image), as two parallel jobs:
 
 - `check` (fast, no compiling): `cargo fmt --check`, `cargo deny --locked check` (advisories,

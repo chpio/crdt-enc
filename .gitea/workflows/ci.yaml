@@ -14,7 +14,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     # built in the git/images repo, meant to float like in the test job
-    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest # zizmor: ignore[unpinned-images]
+    container: ${{ vars.DOCKER_REGISTRY }}/git/ci-rust:latest # zizmor: ignore[unpinned-images]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,7 +39,7 @@ jobs:
     # SCCACHE_REDIS_PASSWORD) comes from the runner for every job; don't set it here, an empty
     # value would override it. The image is meant to float: it's rebuilt with the current toolchain
     # and tools every week.
-    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest # zizmor: ignore[unpinned-images]
+    container: ${{ vars.DOCKER_REGISTRY }}/git/ci-rust:latest # zizmor: ignore[unpinned-images]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -14,7 +14,7 @@ jobs:
   advisories:
     runs-on: ubuntu-latest
     # built in the git/images repo, meant to float like in the ci workflow
-    container: ${{ vars.DOCKER_REGISTRY }}/git/rust:latest # zizmor: ignore[unpinned-images]
+    container: ${{ vars.DOCKER_REGISTRY }}/git/ci-rust:latest # zizmor: ignore[unpinned-images]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
